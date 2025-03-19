@@ -21,7 +21,7 @@ const NozzleManagement = () => {
     const [nozzles, setNozzles] = useState([]);
     const [dispensers, setDispensers] = useState([]);
     const [products, setProducts] = useState([]);
-    const [tanks, setTanks] = useState([]);
+    // Removed tanks state
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isReadingModalVisible, setIsReadingModalVisible] = useState(false);
     const [isHistoryModalVisible, setIsHistoryModalVisible] = useState(false);
@@ -42,7 +42,7 @@ const NozzleManagement = () => {
         fetchNozzles();
         fetchDispensers();
         fetchProducts();
-        fetchTanks();
+        // Removed fetchTanks call
     }, []);
 
     const fetchNozzles = async () => {
@@ -87,18 +87,7 @@ const NozzleManagement = () => {
         }
     };
 
-    const fetchTanks = async () => {
-        try {
-            const querySnapshot = await getDocs(collection(db, "tanks"));
-            const tankList = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-            setTanks(tankList);
-        } catch (error) {
-            message.error("Failed to fetch tanks: " + error.message);
-        }
-    };
+    // Removed fetchTanks function
 
     const fetchReadingHistory = async (nozzleId) => {
         try {
@@ -155,16 +144,10 @@ const NozzleManagement = () => {
     const handleSubmit = async (values) => {
         setSubmitLoading(true);
         try {
-            const product = products.find(p => p.id === values.productId);
-            if (!product || !product.tankId) {
-                message.error("Selected product does not have a tank associated");
-                setSubmitLoading(false);
-                return;
-            }
+            // Removed tankId validation and assignment
             const currentTime = new Date();
             const formattedValues = {
                 ...values,
-                tankId: product.tankId, // Derive tankId from product
                 lastUpdated: currentTime,
             };
 
@@ -213,7 +196,7 @@ const NozzleManagement = () => {
             await addDoc(collection(db, "readings"), {
                 nozzleId: selectedNozzle.id,
                 dispenserId: selectedNozzle.dispenserId,
-                tankId: selectedNozzle.tankId,
+                // Removed tankId
                 productId: selectedNozzle.productId,
                 previousReading,
                 currentReading,
@@ -299,18 +282,7 @@ const NozzleManagement = () => {
             ],
             onFilter: (value, record) => record.nozzlePosition === value,
         },
-        // Tank column remains for display purposes but is derived from product
-        {
-            title: 'Tank',
-            dataIndex: 'tankId',
-            key: 'tankId',
-            render: (tankId) => {
-                const tank = tanks.find(t => t.id === tankId);
-                return tank ? tank.tankName : 'Unknown';
-            },
-            filters: tanks.map(t => ({ text: t.tankName, value: t.id })),
-            onFilter: (value, record) => record.tankId === value,
-        },
+        // Removed Tank column
         {
             title: 'Last Reading',
             dataIndex: 'lastReading',
