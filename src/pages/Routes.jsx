@@ -1,26 +1,46 @@
-// src/routes/Index.jsx
 import React from "react";
-import { Navigate, Route, Routes } from 'react-router-dom';
-import Frontend from "./frontend";
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+
 import Dashboard from "./dashboard";
 import Auth from "./auth";
+import NotFound from "../components/NotFound";
 import { useAuth } from '../context/AuthContext';
-import "bootstrap/dist/js/bootstrap.bundle";
-import 'bootstrap/dist/css/bootstrap.min.css';
+import Loader from "../components/Loader";
 
 export default function Index() {
-    const { user } = useAuth();
+    const { user, loading } = useAuth();
+    const location = useLocation();
+
+    if (loading) {
+        return <div className="d-flex justify-content-center align-items-center" style={{ height: "100vh" }}><Loader /></div>;
+    }
+
+    // Only redirect if the current path is exactly "/"
+    if (location.pathname === "/") {
+        return (
+            <Navigate to={user ? "/dashboard" : "/auth/login"} replace />
+        );
+    }
 
     return (
         <Routes>
-            {/* Public routes */}
-            <Route path='/*' element={<Frontend />} />
+            {/* Auth route: if already logged in, redirect to dashboard */}
+            <Route
+                path="/auth/*"
+                element={!user ? <Auth /> : <Navigate to="/dashboard" replace />}
+            />
 
-            {/* Auth routes - redirect to dashboard if already logged in */}
-            <Route path='auth/*' element={!user ? <Auth /> : <Navigate to="/dashboard" />} />
+            {/* Dashboard route: if not logged in, redirect to login */}
+            <Route
+                path="/dashboard/*"
+                element={user ? <Dashboard /> : <Navigate to="/auth/login" replace />}
+            />
 
-            {/* Dashboard routes - handled internally by Dashboard component */}
-            <Route path='dashboard/*' element={<Dashboard />} />
+            {/* Other routes should render correctly */}
+            <Route
+                path="*"
+                element={<NotFound />}
+            />
         </Routes>
     );
 }

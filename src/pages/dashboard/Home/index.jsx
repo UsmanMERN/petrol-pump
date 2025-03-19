@@ -1,299 +1,338 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Card,
-    Statistic,
-    Table,
-    Button,
-    DatePicker,
-    Row,
-    Col,
-    Typography,
-    Badge,
-    Progress,
-    Alert
+    Card, Row, Col, Statistic, Button, Table, Space,
+    Typography, Progress, Select, DatePicker, message
 } from 'antd';
 import {
-    ArrowUpOutlined,
-    ArrowDownOutlined,
-    DollarOutlined,
-    ClockCircleOutlined
+    DashboardOutlined, LineChartOutlined, BarChartOutlined,
+    PieChartOutlined, DatabaseOutlined, ApiOutlined
 } from '@ant-design/icons';
-import { getFirestore, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, Timestamp } from 'firebase/firestore';
+import { Line, Bar, Pie } from '@ant-design/plots';
+import moment from 'moment';
+import { db } from '../../../config/firebase';
 
-const { Text } = Typography;
+const { Title } = Typography;
+const { Option } = Select;
 const { RangePicker } = DatePicker;
 
-// Dashboard content component that you can integrate into your existing layout
-const DashboardContent = () => {
-    const [fuelTypes, setFuelTypes] = useState([]);
-    const [recentTransactions, setRecentTransactions] = useState([]);
-    const [todaySales, setTodaySales] = useState(0);
-    const [monthlySales, setMonthlySales] = useState(0);
-    const [loading, setLoading] = useState(true);
-
-    const db = getFirestore();
+const Dashboard = () => {
+    const [tanks, setTanks] = useState([]);
+    const [dispensers, setDispensers] = useState([]);
+    const [nozzles, setNozzles] = useState([]);
+    const [products, setProducts] = useState([]);
+    const [readings, setReadings] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [selectedDateRange, setSelectedDateRange] = useState([moment().subtract(7, 'days'), moment()]);
+    const [selectedProduct, setSelectedProduct] = useState('all');
 
     useEffect(() => {
-        // Fetch data from Firebase
-        const fetchData = async () => {
-            try {
-                // Fetch fuel types
-                const fuelTypesSnapshot = await getDocs(collection(db, 'fuelTypes'));
-                const fuelTypesData = fuelTypesSnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                setFuelTypes(fuelTypesData);
+        fetchDashboardData();
+    }, [selectedDateRange, selectedProduct]);
 
-                // Fetch recent transactions
-                const transactionsQuery = query(
-                    collection(db, 'transactions'),
-                    orderBy('timestamp', 'desc'),
-                    limit(10)
+    const fetchDashboardData = async () => {
+        setLoading(true);
+        try {
+            // Fetch tanks
+            const tankSnapshot = await getDocs(collection(db, 'tanks'));
+            const tankList = tankSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setTanks(tankList);
+
+            // Fetch dispensers
+            const dispenserSnapshot = await getDocs(collection(db, 'dispensers'));
+            const dispenserList = dispenserSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setDispensers(dispenserList);
+
+            // Fetch nozzles
+            const nozzleSnapshot = await getDocs(collection(db, 'nozzles'));
+            const nozzleList = nozzleSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setNozzles(nozzleList);
+
+            // Fetch products
+            const productSnapshot = await getDocs(collection(db, 'products'));
+            const productList = productSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setProducts(productList);
+
+            // Fetch readings with filters
+            let readingsQuery = query(
+                collection(db, 'readings'),
+                where('timestamp', '>=', Timestamp.fromDate(selectedDateRange[0].toDate())),
+                where('timestamp', '<=', Timestamp.fromDate(selectedDateRange[1].toDate())),
+                orderBy('timestamp', 'desc')
+            );
+
+            if (selectedProduct !== 'all') {
+                readingsQuery = query(
+                    collection(db, 'readings'),
+                    where('timestamp', '>=', Timestamp.fromDate(selectedDateRange[0].toDate())),
+                    where('timestamp', '<=', Timestamp.fromDate(selectedDateRange[1].toDate())),
+                    where('productId', '==', selectedProduct),
+                    orderBy('timestamp', 'desc')
                 );
-                const transactionsSnapshot = await getDocs(transactionsQuery);
-                const transactionsData = transactionsSnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data(),
-                    key: doc.id
-                }));
-                setRecentTransactions(transactionsData);
-
-                // Calculate today's sales (mock data for now)
-                setTodaySales(35890);
-                setMonthlySales(980425);
-
-                setLoading(false);
-            } catch (error) {
-                console.error("Error fetching data:", error);
-                setLoading(false);
             }
+
+            const readingsSnapshot = await getDocs(readingsQuery);
+            const readingsList = readingsSnapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data(),
+                timestamp: doc.data().timestamp.toDate(),
+            }));
+            setReadings(readingsList);
+        } catch (error) {
+            console.error('Error fetching dashboard data:', error);
+            message.error('Failed to load dashboard data');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Calculate key metrics
+    const totalSales = readings.reduce((sum, reading) => sum + reading.salesAmount, 0);
+    const totalVolume = readings.reduce((sum, reading) => sum + reading.salesVolume, 0);
+    const tankUtilization = tanks.length > 0
+        ? (tanks.reduce((sum, tank) => sum + (tank.currentLevel / tank.capacity), 0) / tanks.length * 100).toFixed(2)
+        : 0;
+
+    // Product-wise sales
+    const productSales = readings.reduce((acc, reading) => {
+        const product = products.find(p => p.id === reading.productId);
+        if (product) {
+            acc[product.productName] = (acc[product.productName] || 0) + reading.salesAmount;
+        }
+        return acc;
+    }, {});
+
+    // Dispenser-wise sales
+    const dispenserSales = readings.reduce((acc, reading) => {
+        const dispenser = dispensers.find(d => d.id === reading.dispenserId);
+        if (dispenser) {
+            acc[dispenser.dispenserName] = (acc[dispenser.dispenserName] || 0) + reading.salesAmount;
+        }
+        return acc;
+    }, {});
+
+    // Chart data preparation
+    const dailySalesData = [];
+    const salesByDate = readings.reduce((acc, reading) => {
+        const dateStr = moment(reading.timestamp).format('YYYY-MM-DD');
+        acc[dateStr] = (acc[dateStr] || 0) + reading.salesAmount;
+        return acc;
+    }, {});
+    Object.keys(salesByDate).sort().forEach(date => {
+        dailySalesData.push({ date, sales: salesByDate[date] });
+    });
+
+    const productSalesData = Object.keys(productSales).map(product => ({
+        type: product,
+        value: productSales[product],
+    }));
+
+    const dispenserSalesData = Object.keys(dispenserSales).map(dispenser => ({
+        dispenser,
+        sales: dispenserSales[dispenser],
+    }));
+
+    // Recent transactions
+    const recentTransactions = readings.slice(0, 10).map(reading => {
+        const product = products.find(p => p.id === reading.productId);
+        const dispenser = dispensers.find(d => d.id === reading.dispenserId);
+        return {
+            id: reading.id,
+            date: moment(reading.timestamp).format('YYYY-MM-DD HH:mm'),
+            product: product?.productName || 'Unknown',
+            dispenser: dispenser?.dispenserName || 'Unknown',
+            volume: reading.salesVolume.toFixed(2),
+            amount: `₨${reading.salesAmount.toFixed(2)}`,
         };
+    });
 
-        fetchData();
-    }, []);
-
-    // Mock data for the fuel inventory chart
-    const fuelInventoryData = [
-        { name: 'Petrol', stock: 75, color: '#1890ff' },
-        { name: 'Diesel', stock: 60, color: '#52c41a' },
-        { name: 'Premium', stock: 45, color: '#faad14' },
-        { name: 'CNG', stock: 90, color: '#722ed1' },
-    ];
-
-    // Table columns for recent transactions
-    const columns = [
-        {
-            title: 'ID',
-            dataIndex: 'id',
-            key: 'id',
-            render: (text) => <a href="#">{text.substring(0, 8)}...</a>,
-        },
-        {
-            title: 'Fuel Type',
-            dataIndex: 'fuelType',
-            key: 'fuelType',
-        },
-        {
-            title: 'Quantity (L)',
-            dataIndex: 'quantity',
-            key: 'quantity',
-        },
-        {
-            title: 'Amount',
-            dataIndex: 'amount',
-            key: 'amount',
-            render: (amount) => `$${amount.toFixed(2)}`,
-        },
-        {
-            title: 'Date',
-            dataIndex: 'timestamp',
-            key: 'timestamp',
-            render: (timestamp) => new Date(timestamp?.toDate()).toLocaleString(),
-        },
-        {
-            title: 'Status',
-            key: 'status',
-            dataIndex: 'status',
-            render: (status) => (
-                <span>
-                    {status === 'completed' ? (
-                        <Badge status="success" text="Completed" />
-                    ) : status === 'pending' ? (
-                        <Badge status="processing" text="In Progress" />
-                    ) : (
-                        <Badge status="error" text="Failed" />
-                    )}
-                </span>
-            ),
-        },
-    ];
+    // Event handlers
+    const handleDateRangeChange = (dates) => setSelectedDateRange(dates);
+    const handleProductChange = (value) => setSelectedProduct(value);
 
     return (
-        <div className="p-4">
-            <div className="mb-4">
-                <Row gutter={[16, 16]} className="mb-4">
-                    <Col xs={24} lg={8}>
-                        {/* <Alert
-                            message="Welcome to your dashboard"
-                            description="Monitor your station's performance and manage fuel inventory in real-time."
-                            type="info"
-                            showIcon
-                            closable
-                            className="mb-3"
-                        /> */}
-                        <div className="d-flex justify-content-between">
-                            <RangePicker className="me-2" />
-                            <Button type="primary">Generate Report</Button>
-                        </div>
-                    </Col>
-                </Row>
-
-                <Row gutter={[16, 16]}>
-                    <Col xs={24} sm={12} lg={6}>
-                        <Card variant={false} className="shadow-sm">
-                            <Statistic
-                                title="Today's Sales"
-                                value={todaySales}
-                                precision={2}
-                                valueStyle={{ color: '#3f8600' }}
-                                prefix={<DollarOutlined />}
-                                suffix="USD"
-                            />
-                            <div className="mt-2">
-                                <Text type="success">
-                                    <ArrowUpOutlined /> 8.5% from yesterday
-                                </Text>
-                            </div>
-                        </Card>
-                    </Col>
-                    <Col xs={24} sm={12} lg={6}>
-                        <Card variant={false} className="shadow-sm">
-                            <Statistic
-                                title="Monthly Revenue"
-                                value={monthlySales}
-                                precision={2}
-                                valueStyle={{ color: '#3f8600' }}
-                                prefix={<DollarOutlined />}
-                                suffix="USD"
-                            />
-                            <div className="mt-2">
-                                <Text type="success">
-                                    <ArrowUpOutlined /> 4.3% from last month
-                                </Text>
-                            </div>
-                        </Card>
-                    </Col>
-                    <Col xs={24} sm={12} lg={6}>
-                        <Card variant={false} className="shadow-sm">
-                            <Statistic
-                                title="Average Transaction"
-                                value={52.75}
-                                precision={2}
-                                valueStyle={{ color: '#cf1322' }}
-                                prefix={<DollarOutlined />}
-                            />
-                            <div className="mt-2">
-                                <Text type="danger">
-                                    <ArrowDownOutlined /> 1.2% from last week
-                                </Text>
-                            </div>
-                        </Card>
-                    </Col>
-                    <Col xs={24} sm={12} lg={6}>
-                        <Card variant={false} className="shadow-sm">
-                            <Statistic
-                                title="Total Transactions"
-                                value={347}
-                                valueStyle={{ color: '#1890ff' }}
-                                prefix={<ClockCircleOutlined />}
-                                suffix="today"
-                            />
-                            <div className="mt-2">
-                                <Text type="success">
-                                    <ArrowUpOutlined /> 12% from yesterday
-                                </Text>
-                            </div>
-                        </Card>
-                    </Col>
-                </Row>
+        <div className="dashboard-container" style={{ padding: '24px' }}>
+            <div className="dashboard-header" style={{ marginBottom: 24 }}>
+                <Space size="middle">
+                    <RangePicker
+                        value={selectedDateRange}
+                        onChange={handleDateRangeChange}
+                        style={{ width: 240 }}
+                    />
+                    <Select
+                        style={{ width: 180 }}
+                        placeholder="Select Product"
+                        value={selectedProduct}
+                        onChange={handleProductChange}
+                    >
+                        <Option value="all">All Products</Option>
+                        {products.map(product => (
+                            <Option key={product.id} value={product.id}>
+                                {product.productName}
+                            </Option>
+                        ))}
+                    </Select>
+                    <Button type="primary" onClick={fetchDashboardData} loading={loading}>
+                        Refresh
+                    </Button>
+                </Space>
             </div>
 
-            <Row gutter={[16, 16]}>
-                <Col xs={24} lg={16}>
-                    <Card
-                        title="Recent Transactions"
-                        variant={false}
-                        className="shadow-sm"
-                        extra={<Button type="link">View All</Button>}
-                    >
-                        <Table
-                            columns={columns}
-                            dataSource={loading ? [] : recentTransactions}
-                            loading={loading}
-                            pagination={{ pageSize: 5 }}
+            {/* Summary Stats */}
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+                <Col xs={24} sm={12} md={6}>
+                    <Card bordered={false} hoverable>
+                        <Statistic
+                            title="Total Sales (PKR)"
+                            value={totalSales}
+                            precision={2}
+                            valueStyle={{ color: '#3f8600' }}
+                            prefix="₨"
                         />
                     </Card>
                 </Col>
-                <Col xs={24} lg={8}>
-                    <Card
-                        title="Fuel Inventory Status"
-                        variant={false}
-                        className="shadow-sm"
-                        extra={<Button type="link">Manage</Button>}
-                    >
-                        {fuelInventoryData.map(item => (
-                            <div key={item.name} className="mb-3">
-                                <div className="d-flex justify-content-between mb-1">
-                                    <Text>{item.name}</Text>
-                                    <Text type={item.stock < 50 ? "danger" : "secondary"}>
-                                        {item.stock}%
-                                    </Text>
-                                </div>
-                                <Progress
-                                    percent={item.stock}
-                                    showInfo={false}
-                                    strokeColor={item.color}
-                                    status={item.stock < 20 ? "exception" : "normal"}
-                                />
-                            </div>
-                        ))}
-                        <div className="mt-4">
-                            <Button type="primary" block>
-                                Order Restock
-                            </Button>
-                        </div>
+                <Col xs={24} sm={12} md={6}>
+                    <Card bordered={false} hoverable>
+                        <Statistic
+                            title="Total Volume Sold"
+                            value={totalVolume}
+                            precision={2}
+                            valueStyle={{ color: '#1890ff' }}
+                            suffix="L"
+                        />
                     </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                    <Card bordered={false} hoverable>
+                        <Statistic
+                            title="Active Dispensers"
+                            value={dispensers.filter(d => d.status === 'active').length}
+                            valueStyle={{ color: '#52c41a' }}
+                            prefix={<ApiOutlined />}
+                            suffix={` / ${dispensers.length}`}
+                        />
+                    </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                    <Card bordered={false} hoverable>
+                        <Statistic
+                            title="Tank Utilization"
+                            value={tankUtilization}
+                            precision={2}
+                            valueStyle={{ color: '#faad14' }}
+                            prefix={<DatabaseOutlined />}
+                            suffix="%"
+                        />
+                        <Progress percent={tankUtilization} status="active" />
+                    </Card>
+                </Col>
+            </Row>
 
+            {/* Charts */}
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+                <Col xs={24} md={16}>
                     <Card
-                        title="Fuel Prices"
-                        variant={false}
-                        className="shadow-sm mt-4"
-                        extra={<Button type="link">Update</Button>}
+                        title={<span><LineChartOutlined /> Daily Sales Trend</span>}
+                        bordered={false}
+                        style={{ background: '#fff' }}
                     >
-                        <ul className="list-unstyled">
-                            <li className="d-flex justify-content-between mb-3">
-                                <Text>Regular Petrol</Text>
-                                <Text strong>$3.45/L</Text>
-                            </li>
-                            <li className="d-flex justify-content-between mb-3">
-                                <Text>Premium Petrol</Text>
-                                <Text strong>$3.75/L</Text>
-                            </li>
-                            <li className="d-flex justify-content-between mb-3">
-                                <Text>Diesel</Text>
-                                <Text strong>$3.20/L</Text>
-                            </li>
-                            <li className="d-flex justify-content-between">
-                                <Text>CNG</Text>
-                                <Text strong>$2.15/L</Text>
-                            </li>
-                        </ul>
-                        <div className="mt-4">
-                            <Button type="default" block>
-                                Price History
-                            </Button>
-                        </div>
+                        {dailySalesData.length > 0 ? (
+                            <Line
+                                data={dailySalesData}
+                                padding="auto"
+                                xField="date"
+                                yField="sales"
+                                point={{ size: 5, shape: 'diamond' }}
+                                tooltip={{
+                                    formatter: datum => ({
+                                        name: 'Sales',
+                                        value: `₨${datum.sales.toFixed(2)}`,
+                                    }),
+                                }}
+                                xAxis={{ tickCount: 5 }}
+                                height={300}
+                            />
+                        ) : (
+                            <div style={{ height: 300, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                No data available for the selected period
+                            </div>
+                        )}
+                    </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                    <Card
+                        title={<span><PieChartOutlined /> Product-wise Sales</span>}
+                        bordered={false}
+                        style={{ background: '#fff' }}
+                    >
+                        {productSalesData.length > 0 ? (
+                            <Pie
+                                data={productSalesData}
+                                angleField="value"
+                                colorField="type"
+                                radius={0.8}
+                                label={{ type: 'outer', content: '{name}: {percentage}' }}
+                                tooltip={{
+                                    formatter: datum => ({
+                                        name: datum.type,
+                                        value: `₨${datum.value.toFixed(2)}`,
+                                    }),
+                                }}
+                                height={300}
+                            />
+                        ) : (
+                            <div style={{ height: 300, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                No data available for the selected period
+                            </div>
+                        )}
+                    </Card>
+                </Col>
+            </Row>
+
+            <Row gutter={[16, 16]}>
+                <Col xs={24} md={12}>
+                    <Card
+                        title={<span><BarChartOutlined /> Dispenser Performance</span>}
+                        bordered={false}
+                        style={{ background: '#fff' }}
+                    >
+                        {dispenserSalesData.length > 0 ? (
+                            <Bar
+                                data={dispenserSalesData}
+                                xField="sales"
+                                yField="dispenser"
+                                seriesField="dispenser"
+                                legend={false}
+                                tooltip={{
+                                    formatter: datum => ({
+                                        name: datum.dispenser,
+                                        value: `₨${datum.sales.toFixed(2)}`,
+                                    }),
+                                }}
+                                height={300}
+                            />
+                        ) : (
+                            <div style={{ height: 300, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                No data available for the selected period
+                            </div>
+                        )}
+                    </Card>
+                </Col>
+                <Col xs={24} md={12}>
+                    <Card title="Recent Transactions" bordered={false} style={{ background: '#fff' }}>
+                        <Table
+                            dataSource={recentTransactions}
+                            rowKey="id"
+                            pagination={false}
+                            size="small"
+                            columns={[
+                                { title: 'Date & Time', dataIndex: 'date', key: 'date' },
+                                { title: 'Product', dataIndex: 'product', key: 'product' },
+                                { title: 'Dispenser', dataIndex: 'dispenser', key: 'dispenser' },
+                                { title: 'Volume (L)', dataIndex: 'volume', key: 'volume' },
+                                { title: 'Amount (PKR)', dataIndex: 'amount', key: 'amount' },
+                            ]}
+                        />
                     </Card>
                 </Col>
             </Row>
@@ -301,4 +340,4 @@ const DashboardContent = () => {
     );
 };
 
-export default DashboardContent;
+export default Dashboard;

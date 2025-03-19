@@ -33,7 +33,7 @@ export default function Login() {
                 await setDoc(doc(db, "users", user.uid), {
                     email: user.email,
                     uid: user.uid,
-                    role: ["student"],
+                    role: ["user"],
                     createdAt: new Date()
                 });
             }
@@ -109,11 +109,6 @@ export default function Login() {
                                 />
                             </Form.Item>
 
-                            <div className="d-flex justify-content-end mb-3">
-                                <a href="/auth/reset-password" className="text-decoration-none">
-                                    Forgot password?
-                                </a>
-                            </div>
 
                             <Form.Item>
                                 <Button
@@ -128,25 +123,8 @@ export default function Login() {
                                 </Button>
                             </Form.Item>
 
-                            {/* <Divider plain>or</Divider>
-
-                            <Button
-                                icon={<GoogleOutlined />}
-                                size="large"
-                                danger
-                                className="w-100"
-                                onClick={handleGoogleLogin}
-                                loading={loading}
-                                block
-                            >
-                                Continue with Google
-                            </Button> */}
                         </Form>
 
-                        {/* <div className="mt-4 text-center">
-                            <Text>Don't have an account? </Text>
-                            <Link to="/auth/signup" className="fw-bold">Sign up</Link>
-                        </div> */}
                     </Card>
                 </div>
             </div>

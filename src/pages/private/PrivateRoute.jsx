@@ -3,11 +3,12 @@ import { Navigate } from "react-router-dom";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../../config/firebase";
 import { useAuth } from "../../context/AuthContext";
+import Loader from "../../components/Loader";
 
 // Loading spinner component
 const LoadingSpinner = () => (
-    <div className="loading-spinner">
-        Loading...
+    <div className="min-vh-100 loading-spinner d-flex justify-content-center align-items-center">
+        <Loader />
     </div>
 );
 
@@ -57,9 +58,6 @@ export default function PrivateRoute({ component: Component, allowedRoles = [], 
         fetchUserRole();
     }, [user, allowedRoles]);
 
-    console.log('allowedRoles', allowedRoles);
-    console.log('userRole', userRole);
-    console.log('isAllowed', isAllowed); // Add this log to debug permission status
 
     // Show loading state while checking permissions
     if (isAllowed === null) {
