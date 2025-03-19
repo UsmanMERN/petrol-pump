@@ -21,9 +21,17 @@ const AccountManagement = () => {
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [currentDateTime, setCurrentDateTime] = useState(new Date());
 
     useEffect(() => {
         fetchAccounts();
+
+        // Update date and time every minute
+        const dateTimeInterval = setInterval(() => {
+            setCurrentDateTime(new Date());
+        }, 60000);
+
+        return () => clearInterval(dateTimeInterval);
     }, []);
 
     const fetchAccounts = async () => {
@@ -32,7 +40,9 @@ const AccountManagement = () => {
             const querySnapshot = await getDocs(collection(db, "accounts"));
             const accountList = querySnapshot.docs.map(doc => ({
                 id: doc.id,
-                ...doc.data()
+                ...doc.data(),
+                createdAt: doc.data().createdAt || new Date().toISOString(),
+                updatedAt: new Date().toISOString()
             }));
             setAccounts(accountList);
         } catch (error) {
@@ -60,11 +70,19 @@ const AccountManagement = () => {
 
     const handleSubmit = async (values) => {
         try {
+            const timestamp = new Date().toISOString();
             if (editingId) {
-                await updateDoc(doc(db, "accounts", editingId), values);
+                await updateDoc(doc(db, "accounts", editingId), {
+                    ...values,
+                    updatedAt: timestamp
+                });
                 message.success("Account updated successfully");
             } else {
-                await addDoc(collection(db, "accounts"), values);
+                await addDoc(collection(db, "accounts"), {
+                    ...values,
+                    createdAt: timestamp,
+                    updatedAt: timestamp
+                });
                 message.success("Account created successfully");
             }
             setIsModalVisible(false);
@@ -143,6 +161,22 @@ const AccountManagement = () => {
             onFilter: (value, record) => record.status === value,
         },
         {
+            title: 'Created Date',
+            dataIndex: 'createdAt',
+            key: 'createdAt',
+            render: (date) => new Date(date).toLocaleDateString(),
+            sorter: (a, b) => new Date(a.createdAt) - new Date(b.createdAt),
+            responsive: ['md'],
+        },
+        {
+            title: 'Updated Date',
+            dataIndex: 'updatedAt',
+            key: 'updatedAt',
+            render: (date) => new Date(date).toLocaleDateString(),
+            sorter: (a, b) => new Date(a.updatedAt) - new Date(b.updatedAt),
+            responsive: ['lg'],
+        },
+        {
             title: 'Actions',
             key: 'actions',
             render: (_, record) => (
@@ -175,15 +209,32 @@ const AccountManagement = () => {
     ];
 
     const filteredAccounts = accounts.filter(account =>
-        account.accountName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        account.accountId.toLowerCase().includes(searchTerm.toLowerCase())
+        account.accountName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        account.accountId?.toLowerCase().includes(searchTerm.toLowerCase())
     );
+
+    const formatDate = (date) => {
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+    };
+
+    const formatTime = (date) => {
+        return date.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    };
 
     return (
         <Card className="account-management-container">
-            <div className="account-header">
-                <Title level={3}>Account Management</Title>
-                <Space>
+            <div className="account-header d-flex justify-content-between flex-wrap mb-3">
+                <div>
+                    <Title level={3}>Account Management</Title>
+                </div>
+                <Space wrap style={{ marginTop: '10px' }}>
                     <Input
                         placeholder="Search by name or ID"
                         value={searchTerm}
@@ -208,15 +259,17 @@ const AccountManagement = () => {
                 </Space>
             </div>
 
-            <Table
-                columns={columns}
-                dataSource={filteredAccounts}
-                rowKey="id"
-                loading={loading}
-                pagination={{ pageSize: 10 }}
-                bordered
-                scroll={{ x: 'max-content' }}
-            />
+            <div className="table-responsive">
+                <Table
+                    columns={columns}
+                    dataSource={filteredAccounts}
+                    rowKey="id"
+                    loading={loading}
+                    pagination={{ pageSize: 10, responsive: true }}
+                    bordered
+                    scroll={{ x: 'max-content' }}
+                />
+            </div>
 
             <Modal
                 title={editingId ? "Edit Account" : "Add New Account"}
@@ -224,13 +277,18 @@ const AccountManagement = () => {
                 onCancel={handleCancel}
                 footer={null}
                 width={800}
+                style={{ maxWidth: '95vw' }}
             >
                 <Form
                     form={form}
                     layout="vertical"
                     onFinish={handleSubmit}
                 >
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+                        gap: '16px'
+                    }}>
                         <Form.Item
                             name="accountId"
                             label="Account ID"

@@ -31,7 +31,22 @@ const AuthContext = createContext();
 export const AuthContextProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [isAdmin, setIsAdmin] = useState(false);
 
+
+    const checkAdminStatus = async () => {
+        try {
+            if (user) {
+                setIsAdmin(user?.role.includes('admin'));
+            }
+        } catch (error) {
+            console.error("Error checking admin status:", error);
+            setIsAdmin(false);
+        }
+    };
+    useEffect(() => {
+        checkAdminStatus()
+    }, [user])
     const fetchUserDetails = async (uid) => {
         const docRef = doc(db, "users", uid);
         const docSnap = await getDoc(docRef);
@@ -204,6 +219,7 @@ export const AuthContextProvider = ({ children }) => {
         await updateDoc(userDocRef, { deleted: true });
     };
 
+
     return (
         <AuthContext.Provider
             value={{
@@ -216,7 +232,7 @@ export const AuthContextProvider = ({ children }) => {
                 createNewUser,
                 createUserForAdmin,
                 updateUserRole,
-                deleteUser,
+                deleteUser, isAdmin
             }}
         >
             {children}

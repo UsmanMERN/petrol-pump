@@ -7,43 +7,86 @@ import {
 import {
     PlusOutlined, EditOutlined, DeleteOutlined,
     FileExcelOutlined, UploadOutlined, DatabaseOutlined,
-    LineChartOutlined
+    LineChartOutlined, ClockCircleOutlined, LockOutlined
 } from '@ant-design/icons';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where, getDoc, setDoc } from 'firebase/firestore';
 import { exportToExcel } from '../../../../services/exportService';
 import { db } from '../../../../config/firebase';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, LineElement, PointElement, LinearScale, CategoryScale } from 'chart.js';
+import { useAuth } from '../../../../context/AuthContext'; // Assuming you have an auth context
 
 ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale);
 
 const { Title } = Typography;
 const { Option } = Select;
 
+// Helper to format date to YYYY-MM-DDThh:mm (for datetime-local input)
+const formatDateTimeLocal = (date) => {
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = ('0' + (d.getMonth() + 1)).slice(-2);
+    const day = ('0' + d.getDate()).slice(-2);
+    const hours = ('0' + d.getHours()).slice(-2);
+    const minutes = ('0' + d.getMinutes()).slice(-2);
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+
 const DipChartManagement = () => {
     const [dipCharts, setDipCharts] = useState([]);
     const [tanks, setTanks] = useState([]);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isBulkModalVisible, setIsBulkModalVisible] = useState(false);
+    const [isDateModalVisible, setIsDateModalVisible] = useState(false);
     const [form] = Form.useForm();
     const [bulkForm] = Form.useForm();
+    const [dateForm] = Form.useForm();
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [buttonLoading, setButtonLoading] = useState(false);
+    const [dateButtonLoading, setDateButtonLoading] = useState(false);
     const [selectedTank, setSelectedTank] = useState(null);
     const [chartData, setChartData] = useState(null);
+    const [currentDateTime, setCurrentDateTime] = useState(new Date());
+    // const [isAdmin, setIsAdmin] = useState(false);
+
+    const { user: currentUser, isAdmin } = useAuth(); // Assuming you have an auth context with currentUser
 
     useEffect(() => {
         fetchDipCharts();
         fetchTanks();
+        // checkAdminStatus();
+        fetchStoredDateTime();
+
+        // Update date and time every minute
+        const dateTimeInterval = setInterval(() => {
+            setCurrentDateTime(new Date());
+        }, 60000);
+
+        return () => clearInterval(dateTimeInterval);
     }, []);
+
+
+    const fetchStoredDateTime = async () => {
+        try {
+            const dateTimeDoc = await getDoc(doc(db, "settings", "dipChartDateTime"));
+            if (dateTimeDoc.exists() && dateTimeDoc.data().timestamp) {
+                setCurrentDateTime(new Date(dateTimeDoc.data().timestamp));
+            }
+        } catch (error) {
+            console.error("Error fetching stored date/time:", error);
+        }
+    };
 
     const fetchDipCharts = async () => {
         setLoading(true);
         try {
             const querySnapshot = await getDocs(collection(db, "dipcharts"));
-            const dipChartList = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
+            const dipChartList = querySnapshot.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data(),
+                createdAt: docSnap.data().createdAt || new Date().toISOString(),
+                updatedAt: docSnap.data().updatedAt || new Date().toISOString()
             }));
             setDipCharts(dipChartList);
         } catch (error) {
@@ -56,9 +99,9 @@ const DipChartManagement = () => {
     const fetchTanks = async () => {
         try {
             const querySnapshot = await getDocs(collection(db, "tanks"));
-            const tankList = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
+            const tankList = querySnapshot.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data()
             }));
             setTanks(tankList);
         } catch (error) {
@@ -69,10 +112,20 @@ const DipChartManagement = () => {
     const showModal = (record = null) => {
         if (record) {
             setEditingId(record.id);
-            form.setFieldsValue(record);
+            // Set the form fields including recordedAt in datetime-local format
+            form.setFieldsValue({
+                ...record,
+                recordedAt: record.recordedAt
+                    ? formatDateTimeLocal(record.recordedAt)
+                    : formatDateTimeLocal(new Date())
+            });
         } else {
             setEditingId(null);
+            // For a new entry, prefill recordedAt with current date/time (as datetime-local string)
             form.resetFields();
+            form.setFieldsValue({
+                recordedAt: formatDateTimeLocal(new Date())
+            });
         }
         setIsModalVisible(true);
     };
@@ -80,6 +133,14 @@ const DipChartManagement = () => {
     const showBulkModal = () => {
         bulkForm.resetFields();
         setIsBulkModalVisible(true);
+    };
+
+    const showDateModal = () => {
+        dateForm.setFieldsValue({
+            date: formatDateTimeLocal(currentDateTime).split('T')[0],
+            time: formatDateTimeLocal(currentDateTime).split('T')[1]
+        });
+        setIsDateModalVisible(true);
     };
 
     const handleCancel = () => {
@@ -92,25 +153,89 @@ const DipChartManagement = () => {
         bulkForm.resetFields();
     };
 
-    const handleSubmit = async (values) => {
+    const handleDateCancel = () => {
+        setIsDateModalVisible(false);
+        dateForm.resetFields();
+    };
+
+    const handleDateSubmit = async (values) => {
+        if (!isAdmin) {
+            message.error("Only administrators can update the date and time");
+            return;
+        }
+
+        setDateButtonLoading(true);
         try {
+            const dateValue = new Date(values.date);
+            const [hours, minutes] = values.time.split(':').map(Number);
+            dateValue.setHours(hours, minutes);
+            // Store in Firestore
+            await setDoc(doc(db, "settings", "dipChartDateTime"), {
+                timestamp: dateValue.toISOString(),
+                updatedBy: currentUser?.uid || 'unknown',
+                updatedAt: new Date().toISOString()
+            });
+            setCurrentDateTime(dateValue);
+            message.success("Date and time updated successfully");
+            setIsDateModalVisible(false);
+        } catch (error) {
+            message.error("Failed to update date and time: " + error.message);
+        } finally {
+            setDateButtonLoading(false);
+        }
+    };
+
+    const handleSubmit = async (values) => {
+        setButtonLoading(true);
+        try {
+            const timestamp = new Date().toISOString();
+            // Process the recordedAt field:
+            // For admin: use the provided value (converted to ISO)
+            // For non-admin:
+            //   - If new record: automatically set to current time
+            //   - If updating: preserve the existing recordedAt field
+            let newRecordedAt = values.recordedAt;
+            if (isAdmin) {
+                newRecordedAt = new Date(values.recordedAt).toISOString();
+            } else {
+                if (!editingId) {
+                    newRecordedAt = new Date().toISOString();
+                } else {
+                    const existing = dipCharts.find(d => d.id === editingId);
+                    newRecordedAt = existing?.recordedAt || new Date().toISOString();
+                }
+            }
+
             if (editingId) {
-                await updateDoc(doc(db, "dipcharts", editingId), values);
+                await updateDoc(doc(db, "dipcharts", editingId), {
+                    ...values,
+                    recordedAt: newRecordedAt,
+                    updatedAt: timestamp
+                });
                 message.success("Dip chart updated successfully");
             } else {
-                await addDoc(collection(db, "dipcharts"), values);
+                await addDoc(collection(db, "dipcharts"), {
+                    ...values,
+                    recordedAt: newRecordedAt,
+                    createdAt: timestamp,
+                    updatedAt: timestamp
+                });
                 message.success("Dip chart created successfully");
             }
             setIsModalVisible(false);
             fetchDipCharts();
         } catch (error) {
             message.error("Operation failed: " + error.message);
+        } finally {
+            setButtonLoading(false);
         }
     };
 
     const handleBulkSubmit = async (values) => {
+        setButtonLoading(true);
         try {
             const { tankId, dipChartData } = values;
+            const timestamp = new Date().toISOString();
 
             // Create array of entries from text input
             const entries = dipChartData.split('\n')
@@ -121,11 +246,13 @@ const DipChartManagement = () => {
                         tankId,
                         chartCode: `${tankId}-${inches}`,
                         dipInches: parseFloat(inches),
-                        dipLiters: parseFloat(liters)
+                        dipLiters: parseFloat(liters),
+                        recordedAt: new Date().toISOString(), // Automatically set for bulk entries
+                        createdAt: timestamp,
+                        updatedAt: timestamp
                     };
                 });
 
-            // Batch add entries
             let successCount = 0;
             for (const entry of entries) {
                 await addDoc(collection(db, "dipcharts"), entry);
@@ -137,22 +264,34 @@ const DipChartManagement = () => {
             fetchDipCharts();
         } catch (error) {
             message.error("Bulk import failed: " + error.message);
+        } finally {
+            setButtonLoading(false);
         }
     };
 
     const handleDelete = async (id) => {
+        setButtonLoading(true);
         try {
             await deleteDoc(doc(db, "dipcharts", id));
             message.success("Dip chart deleted successfully");
             fetchDipCharts();
         } catch (error) {
             message.error("Delete failed: " + error.message);
+        } finally {
+            setButtonLoading(false);
         }
     };
 
     const handleExportToExcel = () => {
-        exportToExcel(dipCharts, 'DipCharts');
-        message.success("Exported successfully");
+        setButtonLoading(true);
+        try {
+            exportToExcel(dipCharts, 'DipCharts');
+            message.success("Exported successfully");
+        } catch (error) {
+            message.error("Export failed: " + error.message);
+        } finally {
+            setButtonLoading(false);
+        }
     };
 
     const prepareChartData = (tankId) => {
@@ -167,6 +306,21 @@ const DipChartManagement = () => {
                 borderColor: '#1890ff',
                 tension: 0.1,
             }],
+        });
+    };
+
+    const formatDate = (date) => {
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+    };
+
+    const formatTime = (date) => {
+        return date.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit'
         });
     };
 
@@ -201,6 +355,33 @@ const DipChartManagement = () => {
             sorter: (a, b) => a.dipLiters - b.dipLiters,
         },
         {
+            title: 'Created Date',
+            dataIndex: 'createdAt',
+            key: 'createdAt',
+            render: (date) => date ? new Date(date).toLocaleDateString() : '-',
+            sorter: (a, b) => new Date(a.createdAt) - new Date(b.createdAt),
+            responsive: ['md'],
+        },
+        {
+            title: 'Updated Date',
+            dataIndex: 'updatedAt',
+            key: 'updatedAt',
+            render: (date) => date ? new Date(date).toLocaleDateString() : '-',
+            sorter: (a, b) => new Date(a.updatedAt) - new Date(b.updatedAt),
+            responsive: ['lg'],
+        },
+        {
+            title: 'Recorded Date/Time',
+            dataIndex: 'recordedAt',
+            key: 'recordedAt',
+            render: (date) =>
+                date
+                    ? new Date(date).toLocaleDateString() + ' ' + new Date(date).toLocaleTimeString()
+                    : '-',
+            sorter: (a, b) => new Date(a.recordedAt) - new Date(b.recordedAt),
+            responsive: ['lg'],
+        },
+        {
             title: 'View Chart',
             key: 'viewChart',
             render: (_, record) => (
@@ -224,6 +405,8 @@ const DipChartManagement = () => {
                             icon={<EditOutlined />}
                             onClick={() => showModal(record)}
                             size="small"
+                            loading={buttonLoading}
+                            disabled={buttonLoading}
                         />
                     </Tooltip>
                     <Tooltip title="Delete">
@@ -237,6 +420,8 @@ const DipChartManagement = () => {
                                 danger
                                 icon={<DeleteOutlined />}
                                 size="small"
+                                loading={buttonLoading}
+                                disabled={buttonLoading}
                             />
                         </Popconfirm>
                     </Tooltip>
@@ -251,13 +436,17 @@ const DipChartManagement = () => {
 
     return (
         <Card className="dipchart-management-container">
-            <div className="dipchart-header">
-                <Title level={3}>Dip Chart Management</Title>
-                <Space>
+            <div className="dipchart-header" style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', marginBottom: '20px' }}>
+                <div>
+                    <Title level={3}>Dip Chart Management</Title>
+                </div>
+                <Space wrap style={{ marginTop: '10px' }}>
                     <Button
                         type="primary"
                         icon={<PlusOutlined />}
                         onClick={() => showModal()}
+                        loading={buttonLoading}
+                        disabled={buttonLoading}
                     >
                         Add Entry
                     </Button>
@@ -265,6 +454,8 @@ const DipChartManagement = () => {
                         type="default"
                         icon={<UploadOutlined />}
                         onClick={showBulkModal}
+                        loading={buttonLoading}
+                        disabled={buttonLoading}
                     >
                         Bulk Import
                     </Button>
@@ -272,6 +463,8 @@ const DipChartManagement = () => {
                         type="default"
                         icon={<FileExcelOutlined />}
                         onClick={handleExportToExcel}
+                        loading={buttonLoading}
+                        disabled={buttonLoading}
                     >
                         Export to Excel
                     </Button>
@@ -285,6 +478,7 @@ const DipChartManagement = () => {
                         style={{ width: '100%' }}
                         onChange={handleTankChange}
                         allowClear
+                        disabled={buttonLoading}
                     >
                         {tanks.map(tank => (
                             <Option key={tank.id} value={tank.id}>{tank.tankName}</Option>
@@ -293,16 +487,19 @@ const DipChartManagement = () => {
                 </Col>
             </Row>
 
-            <Table
-                columns={columns}
-                dataSource={selectedTank ? dipCharts.filter(d => d.tankId === selectedTank) : dipCharts}
-                rowKey="id"
-                loading={loading}
-                pagination={{ pageSize: 10 }}
-                bordered
-                scroll={{ x: 'max-content' }}
-            />
+            <div className="table-responsive">
+                <Table
+                    columns={columns}
+                    dataSource={selectedTank ? dipCharts.filter(d => d.tankId === selectedTank) : dipCharts}
+                    rowKey="id"
+                    loading={loading}
+                    pagination={{ pageSize: 10, responsive: true }}
+                    bordered
+                    scroll={{ x: 'max-content' }}
+                />
+            </div>
 
+            {/* Add/Edit Modal */}
             <Modal
                 title={editingId ? "Edit Dip Chart Entry" : "Add New Dip Chart Entry"}
                 open={isModalVisible}
@@ -360,10 +557,30 @@ const DipChartManagement = () => {
                         <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter volume in liters" />
                     </Form.Item>
 
+                    <Form.Item
+                        name="recordedAt"
+                        label="Recorded Date/Time"
+                        rules={[{ required: true, message: 'Recorded date/time is required' }]}
+                    >
+                        {/* 
+                          For admin, the field is editable.
+                          For non-admin, it is read-only.
+                        */}
+                        <Input
+                            type="datetime-local"
+                            readOnly={!isAdmin}
+                        />
+                    </Form.Item>
+
                     <Form.Item>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                            <Button onClick={handleCancel}>Cancel</Button>
-                            <Button type="primary" htmlType="submit">
+                            <Button onClick={handleCancel} disabled={buttonLoading}>Cancel</Button>
+                            <Button
+                                type="primary"
+                                htmlType="submit"
+                                loading={buttonLoading}
+                                disabled={buttonLoading}
+                            >
                                 {editingId ? 'Update' : 'Create'}
                             </Button>
                         </div>
@@ -371,6 +588,7 @@ const DipChartManagement = () => {
                 </Form>
             </Modal>
 
+            {/* Bulk Import Modal */}
             <Modal
                 title="Bulk Import Dip Chart"
                 open={isBulkModalVisible}
@@ -417,9 +635,65 @@ const DipChartManagement = () => {
 
                     <Form.Item>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                            <Button onClick={handleBulkCancel}>Cancel</Button>
-                            <Button type="primary" htmlType="submit">
+                            <Button onClick={handleBulkCancel} disabled={buttonLoading}>Cancel</Button>
+                            <Button
+                                type="primary"
+                                htmlType="submit"
+                                loading={buttonLoading}
+                                disabled={buttonLoading}
+                            >
                                 Import Data
+                            </Button>
+                        </div>
+                    </Form.Item>
+                </Form>
+            </Modal>
+
+            {/* Date/Time Modal for Admin */}
+            <Modal
+                title={
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <LockOutlined style={{ marginRight: '8px' }} />
+                        Admin Date/Time Update
+                    </div>
+                }
+                open={isDateModalVisible}
+                onCancel={handleDateCancel}
+                footer={null}
+                width={400}
+            >
+                <Form
+                    form={dateForm}
+                    layout="vertical"
+                    onFinish={handleDateSubmit}
+                >
+                    <Form.Item
+                        name="date"
+                        label="Date"
+                        rules={[{ required: true, message: 'Please select a date' }]}
+                    >
+                        <Input type="date" style={{ width: '100%' }} />
+                    </Form.Item>
+
+                    <Form.Item
+                        name="time"
+                        label="Time"
+                        rules={[{ required: true, message: 'Please select a time' }]}
+                    >
+                        <Input type="time" style={{ width: '100%' }} />
+                    </Form.Item>
+
+                    <Form.Item>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                            <Button onClick={handleDateCancel} disabled={dateButtonLoading}>Cancel</Button>
+                            <Button
+                                type="primary"
+                                htmlType="submit"
+                                loading={dateButtonLoading}
+                                disabled={dateButtonLoading || !isAdmin}
+                                icon={<ClockCircleOutlined />}
+                            >
+                                Update Date/Time
                             </Button>
                         </div>
                     </Form.Item>

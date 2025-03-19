@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import {
     Table, Button, Modal, Form, Input, Select, Space, Card,
-    Typography, message, Tooltip, Popconfirm, InputNumber, Statistic, Row, Col, Divider
+    Typography, message, Tooltip, Popconfirm, InputNumber, Statistic, Row, Col
 } from 'antd';
+import moment from 'moment';
 import {
     PlusOutlined, EditOutlined, DeleteOutlined,
     FileExcelOutlined, AimOutlined, DashboardOutlined,
-    DatabaseOutlined, HistoryOutlined
+    HistoryOutlined
 } from '@ant-design/icons';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../../../config/firebase';
 import { exportToExcel } from '../../../../services/exportService';
+import { useAuth } from '../../../../context/AuthContext';
 
 const { Title } = Typography;
 const { Option } = Select;
@@ -22,11 +24,19 @@ const NozzleManagement = () => {
     const [tanks, setTanks] = useState([]);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isReadingModalVisible, setIsReadingModalVisible] = useState(false);
+    const [isHistoryModalVisible, setIsHistoryModalVisible] = useState(false);
     const [selectedNozzle, setSelectedNozzle] = useState(null);
+    const [readingHistory, setReadingHistory] = useState([]);
     const [form] = Form.useForm();
     const [readingForm] = Form.useForm();
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [submitLoading, setSubmitLoading] = useState(false);
+    const [deleteLoading, setDeleteLoading] = useState(false);
+    const [recordReadingLoading, setRecordReadingLoading] = useState(false);
+    const [exportLoading, setExportLoading] = useState(false);
+
+    const { user: currentUser, isAdmin } = useAuth();
 
     useEffect(() => {
         fetchNozzles();
@@ -90,10 +100,26 @@ const NozzleManagement = () => {
         }
     };
 
+    const fetchReadingHistory = async (nozzleId) => {
+        try {
+            const querySnapshot = await getDocs(collection(db, "readings"));
+            const readings = querySnapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(reading => reading.nozzleId === nozzleId)
+                .sort((a, b) => b.timestamp.toDate() - a.timestamp.toDate());
+            setReadingHistory(readings);
+            setIsHistoryModalVisible(true);
+        } catch (error) {
+            message.error("Failed to fetch reading history: " + error.message);
+        }
+    };
+
     const showModal = (record = null) => {
         if (record) {
             setEditingId(record.id);
-            form.setFieldsValue(record);
+            form.setFieldsValue({
+                ...record,
+            });
         } else {
             setEditingId(null);
             form.resetFields();
@@ -121,16 +147,36 @@ const NozzleManagement = () => {
         readingForm.resetFields();
     };
 
+    const handleHistoryCancel = () => {
+        setIsHistoryModalVisible(false);
+        setReadingHistory([]);
+    };
+
     const handleSubmit = async (values) => {
+        setSubmitLoading(true);
         try {
+            const product = products.find(p => p.id === values.productId);
+            if (!product || !product.tankId) {
+                message.error("Selected product does not have a tank associated");
+                setSubmitLoading(false);
+                return;
+            }
+            const currentTime = new Date();
+            const formattedValues = {
+                ...values,
+                tankId: product.tankId, // Derive tankId from product
+                lastUpdated: currentTime,
+            };
+
             if (editingId) {
-                await updateDoc(doc(db, "nozzles", editingId), values);
+                await updateDoc(doc(db, "nozzles", editingId), formattedValues);
                 message.success("Nozzle updated successfully");
             } else {
                 await addDoc(collection(db, "nozzles"), {
-                    ...values,
+                    ...formattedValues,
                     lastReading: 0,
                     totalSales: 0,
+                    createdAt: currentTime,
                 });
                 message.success("Nozzle created successfully");
             }
@@ -138,30 +184,32 @@ const NozzleManagement = () => {
             fetchNozzles();
         } catch (error) {
             message.error("Operation failed: " + error.message);
+        } finally {
+            setSubmitLoading(false);
         }
     };
 
     const handleReadingSubmit = async (values) => {
+        setRecordReadingLoading(true);
         try {
             const { currentReading, previousReading } = values;
             const salesVolume = currentReading - previousReading;
 
             if (salesVolume < 0) {
                 message.error("Current reading cannot be less than previous reading");
+                setRecordReadingLoading(false);
                 return;
             }
 
-            // Get product price
             const product = products.find(p => p.id === selectedNozzle.productId);
             const salesAmount = salesVolume * product.salesPrice;
 
-            // Update nozzle reading
             await updateDoc(doc(db, "nozzles", selectedNozzle.id), {
                 lastReading: currentReading,
-                totalSales: (selectedNozzle.totalSales || 0) + salesAmount
+                totalSales: (selectedNozzle.totalSales || 0) + salesAmount,
+                lastUpdated: new Date(),
             });
 
-            // Add reading record
             await addDoc(collection(db, "readings"), {
                 nozzleId: selectedNozzle.id,
                 dispenserId: selectedNozzle.dispenserId,
@@ -171,7 +219,7 @@ const NozzleManagement = () => {
                 currentReading,
                 salesVolume,
                 salesAmount,
-                timestamp: new Date()
+                timestamp: new Date(),
             });
 
             message.success("Reading recorded successfully");
@@ -179,22 +227,34 @@ const NozzleManagement = () => {
             fetchNozzles();
         } catch (error) {
             message.error("Operation failed: " + error.message);
+        } finally {
+            setRecordReadingLoading(false);
         }
     };
 
     const handleDelete = async (id) => {
+        setDeleteLoading(id);
         try {
             await deleteDoc(doc(db, "nozzles", id));
             message.success("Nozzle deleted successfully");
             fetchNozzles();
         } catch (error) {
             message.error("Delete failed: " + error.message);
+        } finally {
+            setDeleteLoading(false);
         }
     };
 
     const handleExportToExcel = () => {
-        exportToExcel(nozzles, 'Nozzles');
-        message.success("Exported successfully");
+        setExportLoading(true);
+        try {
+            exportToExcel(nozzles, 'Nozzles');
+            message.success("Exported successfully");
+        } catch (error) {
+            message.error("Export failed: " + error.message);
+        } finally {
+            setExportLoading(false);
+        }
     };
 
     const columns = [
@@ -239,6 +299,7 @@ const NozzleManagement = () => {
             ],
             onFilter: (value, record) => record.nozzlePosition === value,
         },
+        // Tank column remains for display purposes but is derived from product
         {
             title: 'Tank',
             dataIndex: 'tankId',
@@ -264,6 +325,17 @@ const NozzleManagement = () => {
             sorter: (a, b) => a.totalSales - b.totalSales,
         },
         {
+            title: 'Last Updated',
+            dataIndex: 'lastUpdated',
+            key: 'lastUpdated',
+            render: (lastUpdated) => lastUpdated ? moment(lastUpdated.toDate()).format('DD/MM/YYYY HH:mm:ss') : 'Never',
+            sorter: (a, b) => {
+                if (!a.lastUpdated) return -1;
+                if (!b.lastUpdated) return 1;
+                return a.lastUpdated.toDate() - b.lastUpdated.toDate();
+            },
+        },
+        {
             title: 'Actions',
             key: 'actions',
             render: (_, record) => (
@@ -274,13 +346,14 @@ const NozzleManagement = () => {
                             icon={<DashboardOutlined />}
                             onClick={() => showReadingModal(record)}
                             size="small"
+                            loading={recordReadingLoading && selectedNozzle?.id === record.id}
                         />
                     </Tooltip>
                     <Tooltip title="View History">
                         <Button
                             type="default"
                             icon={<HistoryOutlined />}
-                            onClick={() => {/* Logic to show reading history */ }}
+                            onClick={() => fetchReadingHistory(record.id)}
                             size="small"
                         />
                     </Tooltip>
@@ -298,11 +371,13 @@ const NozzleManagement = () => {
                             onConfirm={() => handleDelete(record.id)}
                             okText="Yes"
                             cancelText="No"
+                            okButtonProps={{ loading: deleteLoading === record.id }}
                         >
                             <Button
                                 danger
                                 icon={<DeleteOutlined />}
                                 size="small"
+                                loading={deleteLoading === record.id}
                             />
                         </Popconfirm>
                     </Tooltip>
@@ -313,9 +388,9 @@ const NozzleManagement = () => {
 
     return (
         <Card className="nozzle-management-container">
-            <div className="nozzle-header">
+            <div className="nozzle-header d-flex justify-content-between flex-wrap mb-3">
                 <Title level={3}>Nozzle Management</Title>
-                <Space>
+                <Space wrap>
                     <Button
                         type="primary"
                         icon={<PlusOutlined />}
@@ -327,14 +402,15 @@ const NozzleManagement = () => {
                         type="default"
                         icon={<FileExcelOutlined />}
                         onClick={handleExportToExcel}
+                        loading={exportLoading}
                     >
                         Export to Excel
                     </Button>
                 </Space>
             </div>
 
-            <Row gutter={16} style={{ marginBottom: 16 }}>
-                <Col span={8}>
+            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+                <Col xs={24} sm={12} md={8} lg={8}>
                     <Statistic
                         title="Total Sales (PKR)"
                         value={nozzles.reduce((sum, n) => sum + (n.totalSales || 0), 0)}
@@ -344,15 +420,17 @@ const NozzleManagement = () => {
                 </Col>
             </Row>
 
-            <Table
-                columns={columns}
-                dataSource={nozzles}
-                rowKey="id"
-                loading={loading}
-                pagination={{ pageSize: 10 }}
-                bordered
-                scroll={{ x: 'max-content' }}
-            />
+            <div className="table-responsive">
+                <Table
+                    columns={columns}
+                    dataSource={nozzles}
+                    rowKey="id"
+                    loading={loading}
+                    pagination={{ pageSize: 10, responsive: true }}
+                    bordered
+                    scroll={{ x: 'max-content' }}
+                />
+            </div>
 
             <Modal
                 title={editingId ? "Edit Nozzle Attachment" : "Add New Nozzle Attachment"}
@@ -411,24 +489,12 @@ const NozzleManagement = () => {
                                 <Option value="4">Nozzle 4</Option>
                             </Select>
                         </Form.Item>
-
-                        <Form.Item
-                            name="tankId"
-                            label="Tank"
-                            rules={[{ required: true, message: 'Please select tank' }]}
-                        >
-                            <Select placeholder="Select tank">
-                                {tanks.map(tank => (
-                                    <Option key={tank.id} value={tank.id}>{tank.tankName}</Option>
-                                ))}
-                            </Select>
-                        </Form.Item>
                     </div>
 
                     <Form.Item>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                             <Button onClick={handleCancel}>Cancel</Button>
-                            <Button type="primary" htmlType="submit">
+                            <Button type="primary" htmlType="submit" loading={submitLoading}>
                                 {editingId ? 'Update' : 'Create'}
                             </Button>
                         </div>
@@ -459,7 +525,7 @@ const NozzleManagement = () => {
                             name="previousReading"
                             label="Previous Reading"
                         >
-                            <InputNumber disabled style={{ width: '100%' }} />
+                            <InputNumber disabled={!isAdmin} style={{ width: '100%' }} />
                         </Form.Item>
 
                         <Form.Item
@@ -483,13 +549,56 @@ const NozzleManagement = () => {
                         <Form.Item>
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                                 <Button onClick={handleReadingCancel}>Cancel</Button>
-                                <Button type="primary" htmlType="submit">
+                                <Button type="primary" htmlType="submit" loading={recordReadingLoading}>
                                     Record Reading
                                 </Button>
                             </div>
                         </Form.Item>
                     </Form>
                 )}
+            </Modal>
+
+            <Modal
+                title="Reading History"
+                open={isHistoryModalVisible}
+                onCancel={handleHistoryCancel}
+                footer={null}
+                width={800}
+            >
+                <Table
+                    dataSource={readingHistory}
+                    columns={[
+                        {
+                            title: 'Date',
+                            dataIndex: 'timestamp',
+                            key: 'timestamp',
+                            render: (timestamp) => moment(timestamp.toDate()).format('DD/MM/YYYY HH:mm:ss'),
+                        },
+                        {
+                            title: 'Previous Reading',
+                            dataIndex: 'previousReading',
+                            key: 'previousReading',
+                        },
+                        {
+                            title: 'Current Reading',
+                            dataIndex: 'currentReading',
+                            key: 'currentReading',
+                        },
+                        {
+                            title: 'Sales Volume',
+                            dataIndex: 'salesVolume',
+                            key: 'salesVolume',
+                        },
+                        {
+                            title: 'Sales Amount (PKR)',
+                            dataIndex: 'salesAmount',
+                            key: 'salesAmount',
+                            render: (amount) => `₨${amount.toFixed(2)}`,
+                        },
+                    ]}
+                    rowKey="id"
+                    pagination={{ pageSize: 10 }}
+                />
             </Modal>
         </Card>
     );

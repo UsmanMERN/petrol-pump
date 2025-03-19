@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import {
     Table, Button, Modal, Form, Input, Select, Space, Card,
-    Typography, message, Tooltip, Popconfirm, InputNumber
+    Typography, message, Tooltip, Popconfirm, InputNumber,
+    Statistic, Row, Col, Divider, DatePicker
 } from 'antd';
 import {
     PlusOutlined, EditOutlined, DeleteOutlined,
-    FileExcelOutlined, SearchOutlined
+    FileExcelOutlined, SearchOutlined, HistoryOutlined
 } from '@ant-design/icons';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../../../config/firebase';
 import { exportToExcel } from '../../../../services/exportService';
+import { useAuth } from '../../../../context/AuthContext';
+import moment from 'moment';
 
 const { Title } = Typography;
 const { Option } = Select;
@@ -18,10 +21,17 @@ const ProductManagement = () => {
     const [products, setProducts] = useState([]);
     const [tanks, setTanks] = useState([]);
     const [isModalVisible, setIsModalVisible] = useState(false);
+    const [isPriceHistoryModalVisible, setIsPriceHistoryModalVisible] = useState(false);
+    const [selectedProduct, setSelectedProduct] = useState(null);
     const [form] = Form.useForm();
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [submitLoading, setSubmitLoading] = useState(false);
+    const [deleteLoading, setDeleteLoading] = useState(false);
+    const [exportLoading, setExportLoading] = useState(false);
+
+    const { isAdmin } = useAuth();
 
     useEffect(() => {
         fetchProducts();
@@ -68,27 +78,46 @@ const ProductManagement = () => {
         setIsModalVisible(true);
     };
 
+    const showPriceHistoryModal = (record) => {
+        setSelectedProduct(record);
+        setIsPriceHistoryModalVisible(true);
+    };
+
     const handleCancel = () => {
         setIsModalVisible(false);
         form.resetFields();
     };
 
+    const handlePriceHistoryCancel = () => {
+        setIsPriceHistoryModalVisible(false);
+    };
+
     const handleSubmit = async (values) => {
+        setSubmitLoading(true);
         try {
             if (editingId) {
                 const existingProduct = products.find(p => p.id === editingId);
                 const newPriceHistory = existingProduct.priceHistory || [];
+
+                // Only record price history if sales price has changed
                 if (existingProduct.salesPrice !== values.salesPrice) {
                     newPriceHistory.push({
                         price: values.salesPrice,
                         date: new Date().toISOString(),
+                        previousPrice: existingProduct.salesPrice
                     });
                 }
                 values.priceHistory = newPriceHistory;
+
                 await updateDoc(doc(db, "products", editingId), values);
                 message.success("Product updated successfully");
             } else {
-                values.priceHistory = [];
+                // Initialize empty price history for new products
+                values.priceHistory = [{
+                    price: values.salesPrice,
+                    date: new Date().toISOString(),
+                    previousPrice: null
+                }];
                 await addDoc(collection(db, "products"), values);
                 message.success("Product created successfully");
             }
@@ -96,23 +125,73 @@ const ProductManagement = () => {
             fetchProducts();
         } catch (error) {
             message.error("Operation failed: " + error.message);
+        } finally {
+            setSubmitLoading(false);
         }
     };
 
     const handleDelete = async (id) => {
+        setDeleteLoading(id);
         try {
             await deleteDoc(doc(db, "products", id));
             message.success("Product deleted successfully");
             fetchProducts();
         } catch (error) {
             message.error("Delete failed: " + error.message);
+        } finally {
+            setDeleteLoading(false);
         }
     };
 
     const handleExportToExcel = () => {
-        exportToExcel(products, 'Products');
-        message.success("Exported successfully");
+        setExportLoading(true);
+        try {
+            exportToExcel(products, 'Products');
+            message.success("Exported successfully");
+        } catch (error) {
+            message.error("Export failed: " + error.message);
+        } finally {
+            setExportLoading(false);
+        }
     };
+
+    const priceHistoryColumns = [
+        {
+            title: 'Date & Time',
+            dataIndex: 'date',
+            key: 'date',
+            render: (date) => moment(date).format('DD/MM/YYYY HH:mm:ss'),
+        },
+        {
+            title: 'Previous Price (PKR)',
+            dataIndex: 'previousPrice',
+            key: 'previousPrice',
+            render: (price) => price ? `₨${parseFloat(price).toFixed(2)}` : 'Initial Price',
+        },
+        {
+            title: 'New Price (PKR)',
+            dataIndex: 'price',
+            key: 'price',
+            render: (price) => `₨${parseFloat(price).toFixed(2)}`,
+        },
+        {
+            title: 'Change',
+            key: 'change',
+            render: (_, record) => {
+                if (!record.previousPrice) return 'N/A';
+
+                const change = parseFloat(record.price) - parseFloat(record.previousPrice);
+                const percentChange = (change / parseFloat(record.previousPrice)) * 100;
+
+                const color = change > 0 ? '#ff4d4f' : '#52c41a';
+                const prefix = change > 0 ? '+' : '';
+
+                return <span style={{ color }}>
+                    {`${prefix}${change.toFixed(2)} (${prefix}${percentChange.toFixed(2)}%)`}
+                </span>;
+            }
+        }
+    ];
 
     const columns = [
         {
@@ -165,6 +244,15 @@ const ProductManagement = () => {
             key: 'actions',
             render: (_, record) => (
                 <Space size="small">
+                    <Tooltip title="Price History">
+                        <Button
+                            type="default"
+                            icon={<HistoryOutlined />}
+                            onClick={() => showPriceHistoryModal(record)}
+                            size="small"
+                            disabled={!record.priceHistory || record.priceHistory.length === 0}
+                        />
+                    </Tooltip>
                     <Tooltip title="Edit">
                         <Button
                             type="primary"
@@ -179,11 +267,13 @@ const ProductManagement = () => {
                             onConfirm={() => handleDelete(record.id)}
                             okText="Yes"
                             cancelText="No"
+                            okButtonProps={{ loading: deleteLoading === record.id }}
                         >
                             <Button
                                 danger
                                 icon={<DeleteOutlined />}
                                 size="small"
+                                loading={deleteLoading === record.id}
                             />
                         </Popconfirm>
                     </Tooltip>
@@ -193,21 +283,30 @@ const ProductManagement = () => {
     ];
 
     const filteredProducts = products.filter(product =>
-        product.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        product.productId.toLowerCase().includes(searchTerm.toLowerCase())
+        product.productName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.productId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.brand?.toLowerCase().includes(searchTerm.toLowerCase())
     );
+
+    // Get total product value
+    const calculateTotalValue = () => {
+        return products.reduce((sum, product) => {
+            return sum + (product.salesPrice * (product.openingQuantity || 0));
+        }, 0);
+    };
 
     return (
         <Card className="product-management-container">
-            <div className="product-header">
+            <div className="product-header d-flex justify-content-between flex-wrap mb-3">
                 <Title level={3}>Product Management</Title>
-                <Space>
+                <Space wrap>
                     <Input
-                        placeholder="Search by name or ID"
+                        placeholder="Search by name, ID or brand"
                         value={searchTerm}
                         onChange={e => setSearchTerm(e.target.value)}
                         style={{ width: 300 }}
                         prefix={<SearchOutlined />}
+                        allowClear
                     />
                     <Button
                         type="primary"
@@ -220,35 +319,62 @@ const ProductManagement = () => {
                         type="default"
                         icon={<FileExcelOutlined />}
                         onClick={handleExportToExcel}
+                        loading={exportLoading}
                     >
                         Export to Excel
                     </Button>
                 </Space>
             </div>
 
-            <Table
-                columns={columns}
-                dataSource={filteredProducts}
-                rowKey="id"
-                loading={loading}
-                pagination={{ pageSize: 10 }}
-                bordered
-                scroll={{ x: 'max-content' }}
-            />
+            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+                <Col xs={24} sm={12} md={8} lg={8}>
+                    <Statistic
+                        title="Total Products"
+                        value={products.length}
+                    />
+                </Col>
+                <Col xs={24} sm={12} md={8} lg={8}>
+                    <Statistic
+                        title="Total Inventory Value (PKR)"
+                        value={calculateTotalValue()}
+                        precision={2}
+                        prefix="₨"
+                    />
+                </Col>
+            </Row>
 
+            <div className="table-responsive">
+                <Table
+                    columns={columns}
+                    dataSource={filteredProducts}
+                    rowKey="id"
+                    loading={loading}
+                    pagination={{ pageSize: 10, responsive: true }}
+                    bordered
+                    scroll={{ x: 'max-content' }}
+                />
+            </div>
+
+            {/* Add/Edit Product Modal */}
             <Modal
                 title={editingId ? "Edit Product" : "Add New Product"}
                 open={isModalVisible}
                 onCancel={handleCancel}
                 footer={null}
-                width={800}
+                width="90%"
+                style={{ maxWidth: '800px' }}
+                destroyOnClose
             >
                 <Form
                     form={form}
                     layout="vertical"
                     onFinish={handleSubmit}
                 >
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div className="form-grid" style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+                        gap: '16px'
+                    }}>
                         <Form.Item
                             name="productId"
                             label="Product ID"
@@ -292,9 +418,15 @@ const ProductManagement = () => {
                         <Form.Item
                             name="brand"
                             label="Brand"
-                            rules={[{ required: true, message: 'Please enter brand' }]}
                         >
                             <Input placeholder="Enter brand" />
+                        </Form.Item>
+
+                        <Form.Item
+                            name="category"
+                            label="Category"
+                        >
+                            <Input placeholder="Enter category" />
                         </Form.Item>
 
                         <Form.Item
@@ -328,22 +460,6 @@ const ProductManagement = () => {
                         </Form.Item>
 
                         <Form.Item
-                            name="batchNo"
-                            label="Batch Number"
-                            rules={[{ required: true, message: 'Please enter batch number' }]}
-                        >
-                            <Input placeholder="Enter batch number" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="category"
-                            label="Category"
-                            rules={[{ required: true, message: 'Please enter category' }]}
-                        >
-                            <Input placeholder="Enter category" />
-                        </Form.Item>
-
-                        <Form.Item
                             name="priceHistory"
                             label="Price History"
                             hidden
@@ -353,14 +469,40 @@ const ProductManagement = () => {
                     </div>
 
                     <Form.Item>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
                             <Button onClick={handleCancel}>Cancel</Button>
-                            <Button type="primary" htmlType="submit">
+                            <Button type="primary" htmlType="submit" loading={submitLoading}>
                                 {editingId ? 'Update' : 'Create'}
                             </Button>
                         </div>
                     </Form.Item>
                 </Form>
+            </Modal>
+
+            {/* Price History Modal */}
+            <Modal
+                title={`Price History - ${selectedProduct?.productName || ''}`}
+                open={isPriceHistoryModalVisible}
+                onCancel={handlePriceHistoryCancel}
+                footer={[
+                    <Button key="close" onClick={handlePriceHistoryCancel}>
+                        Close
+                    </Button>
+                ]}
+                width="90%"
+                style={{ maxWidth: '800px' }}
+                destroyOnClose
+            >
+                {selectedProduct && selectedProduct.priceHistory && (
+                    <Table
+                        columns={priceHistoryColumns}
+                        dataSource={[...selectedProduct.priceHistory].reverse()} // Show newest first
+                        rowKey={(record, index) => index}
+                        pagination={{ pageSize: 10 }}
+                        bordered
+                        scroll={{ x: 'max-content' }}
+                    />
+                )}
             </Modal>
         </Card>
     );
