@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Table, Button, Modal, Form, Input, Select, Space, Card,
-    Typography, message, Tooltip, Popconfirm, InputNumber, Statistic, Row, Col
+    Table, Button, Modal, Form, Input, Space, Card,
+    Typography, message, Tooltip, Popconfirm, InputNumber, Spin, DatePicker, Select, Statistic, Row, Col
 } from 'antd';
 import moment from 'moment';
 import {
     PlusOutlined, EditOutlined, DeleteOutlined,
-    FileExcelOutlined, AimOutlined, DashboardOutlined,
-    HistoryOutlined
+    FileExcelOutlined, DashboardOutlined, HistoryOutlined, LoadingOutlined
 } from '@ant-design/icons';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../../../config/firebase';
@@ -18,23 +17,32 @@ const { Title } = Typography;
 const { Option } = Select;
 
 const NozzleManagement = () => {
+    // Main data states
     const [nozzles, setNozzles] = useState([]);
     const [dispensers, setDispensers] = useState([]);
     const [products, setProducts] = useState([]);
-    // Removed tanks state
+    const [tanks, setTanks] = useState([]);
+
+    // Modal visibility states
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isReadingModalVisible, setIsReadingModalVisible] = useState(false);
     const [isHistoryModalVisible, setIsHistoryModalVisible] = useState(false);
+
+    // Reading history and selected nozzle for reading updates
     const [selectedNozzle, setSelectedNozzle] = useState(null);
     const [readingHistory, setReadingHistory] = useState([]);
+
+    // Form instances
     const [form] = Form.useForm();
     const [readingForm] = Form.useForm();
+
+    // For edit mode and loading indicators
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(false);
     const [submitLoading, setSubmitLoading] = useState(false);
     const [deleteLoading, setDeleteLoading] = useState(false);
     const [recordReadingLoading, setRecordReadingLoading] = useState(false);
-    const [exportLoading, setExportLoading] = useState(false);
+    const [exporting, setExporting] = useState(false);
 
     const { user: currentUser, isAdmin } = useAuth();
 
@@ -42,7 +50,7 @@ const NozzleManagement = () => {
         fetchNozzles();
         fetchDispensers();
         fetchProducts();
-        // Removed fetchTanks call
+        fetchTanks();
     }, []);
 
     const fetchNozzles = async () => {
@@ -87,7 +95,18 @@ const NozzleManagement = () => {
         }
     };
 
-    // Removed fetchTanks function
+    const fetchTanks = async () => {
+        try {
+            const querySnapshot = await getDocs(collection(db, "tanks"));
+            const tankList = querySnapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            setTanks(tankList);
+        } catch (error) {
+            message.error("Failed to fetch tanks: " + error.message);
+        }
+    };
 
     const fetchReadingHistory = async (nozzleId) => {
         try {
@@ -106,12 +125,11 @@ const NozzleManagement = () => {
     const showModal = (record = null) => {
         if (record) {
             setEditingId(record.id);
-            form.setFieldsValue({
-                ...record,
-            });
+            form.setFieldsValue({ ...record });
         } else {
             setEditingId(null);
             form.resetFields();
+            form.setFieldsValue({ openingReading: 0 });
         }
         setIsModalVisible(true);
     };
@@ -122,6 +140,8 @@ const NozzleManagement = () => {
             nozzleId: record.id,
             previousReading: record.lastReading || 0,
             currentReading: '',
+            tankId: undefined, // New dropdown for tank selection
+            newPrice: undefined, // Optional field to update product price
         });
         setIsReadingModalVisible(true);
     };
@@ -144,20 +164,15 @@ const NozzleManagement = () => {
     const handleSubmit = async (values) => {
         setSubmitLoading(true);
         try {
-            // Removed tankId validation and assignment
             const currentTime = new Date();
-            const formattedValues = {
-                ...values,
-                lastUpdated: currentTime,
-            };
-
+            const formattedValues = { ...values, lastUpdated: currentTime };
             if (editingId) {
                 await updateDoc(doc(db, "nozzles", editingId), formattedValues);
                 message.success("Nozzle updated successfully");
             } else {
                 await addDoc(collection(db, "nozzles"), {
                     ...formattedValues,
-                    lastReading: 0,
+                    lastReading: values.openingReading,
                     totalSales: 0,
                     createdAt: currentTime,
                 });
@@ -175,36 +190,58 @@ const NozzleManagement = () => {
     const handleReadingSubmit = async (values) => {
         setRecordReadingLoading(true);
         try {
-            const { currentReading, previousReading } = values;
+            const { currentReading, previousReading, tankId, newPrice } = values;
             const salesVolume = currentReading - previousReading;
-
             if (salesVolume < 0) {
                 message.error("Current reading cannot be less than previous reading");
                 setRecordReadingLoading(false);
                 return;
             }
-
+            // Find the product to compute sales amount
             const product = products.find(p => p.id === selectedNozzle.productId);
+            if (!product) {
+                message.error("Linked product not found");
+                setRecordReadingLoading(false);
+                return;
+            }
             const salesAmount = salesVolume * product.salesPrice;
-
+            // Update the nozzle record with new reading and accumulated sales
             await updateDoc(doc(db, "nozzles", selectedNozzle.id), {
                 lastReading: currentReading,
                 totalSales: (selectedNozzle.totalSales || 0) + salesAmount,
                 lastUpdated: new Date(),
             });
-
+            // Record the reading history
             await addDoc(collection(db, "readings"), {
                 nozzleId: selectedNozzle.id,
                 dispenserId: selectedNozzle.dispenserId,
-                // Removed tankId
                 productId: selectedNozzle.productId,
+                tankId, // Selected tank from dropdown
                 previousReading,
                 currentReading,
                 salesVolume,
                 salesAmount,
                 timestamp: new Date(),
             });
-
+            // If a new price is provided, update the product's sales price
+            if (newPrice !== undefined && newPrice !== null) {
+                await updateDoc(doc(db, "products", selectedNozzle.productId), {
+                    salesPrice: newPrice,
+                });
+            }
+            // Deduct sold volume from the tank's currentVolume
+            if (tankId) {
+                const tankRef = doc(db, "tanks", tankId);
+                const currentTank = tanks.find(t => t.id === tankId);
+                if (currentTank && typeof currentTank.currentVolume === 'number') {
+                    const newVolume = currentTank.currentVolume - salesVolume;
+                    if (newVolume < 0) {
+                        message.error("Not enough volume in the selected tank.");
+                    } else {
+                        await updateDoc(tankRef, { currentVolume: newVolume });
+                    }
+                }
+            }
             message.success("Reading recorded successfully");
             setIsReadingModalVisible(false);
             fetchNozzles();
@@ -229,24 +266,18 @@ const NozzleManagement = () => {
     };
 
     const handleExportToExcel = () => {
-        setExportLoading(true);
+        setExporting(true);
         try {
             exportToExcel(nozzles, 'Nozzles');
             message.success("Exported successfully");
         } catch (error) {
             message.error("Export failed: " + error.message);
         } finally {
-            setExportLoading(false);
+            setExporting(false);
         }
     };
 
     const columns = [
-        {
-            title: 'Attachment ID',
-            dataIndex: 'attachmentId',
-            key: 'attachmentId',
-            sorter: (a, b) => a.attachmentId.localeCompare(b.attachmentId),
-        },
         {
             title: 'Dispenser',
             dataIndex: 'dispenserId',
@@ -269,20 +300,6 @@ const NozzleManagement = () => {
             filters: products.map(p => ({ text: p.productName, value: p.id })),
             onFilter: (value, record) => record.productId === value,
         },
-        {
-            title: 'Nozzle Position',
-            dataIndex: 'nozzlePosition',
-            key: 'nozzlePosition',
-            render: (position) => `Nozzle ${position}`,
-            filters: [
-                { text: 'Nozzle 1', value: '1' },
-                { text: 'Nozzle 2', value: '2' },
-                { text: 'Nozzle 3', value: '3' },
-                { text: 'Nozzle 4', value: '4' },
-            ],
-            onFilter: (value, record) => record.nozzlePosition === value,
-        },
-        // Removed Tank column
         {
             title: 'Last Reading',
             dataIndex: 'lastReading',
@@ -319,6 +336,7 @@ const NozzleManagement = () => {
                             onClick={() => showReadingModal(record)}
                             size="small"
                             loading={recordReadingLoading && selectedNozzle?.id === record.id}
+                            disabled={recordReadingLoading && selectedNozzle?.id === record.id}
                         />
                     </Tooltip>
                     <Tooltip title="View History">
@@ -347,9 +365,9 @@ const NozzleManagement = () => {
                         >
                             <Button
                                 danger
-                                icon={<DeleteOutlined />}
+                                icon={deleteLoading === record.id ? <LoadingOutlined /> : <DeleteOutlined />}
                                 size="small"
-                                loading={deleteLoading === record.id}
+                                disabled={deleteLoading === record.id}
                             />
                         </Popconfirm>
                     </Tooltip>
@@ -374,7 +392,7 @@ const NozzleManagement = () => {
                         type="default"
                         icon={<FileExcelOutlined />}
                         onClick={handleExportToExcel}
-                        loading={exportLoading}
+                        loading={exporting}
                     >
                         Export to Excel
                     </Button>
@@ -404,6 +422,7 @@ const NozzleManagement = () => {
                 />
             </div>
 
+            {/* Add/Edit Nozzle Modal */}
             <Modal
                 title={editingId ? "Edit Nozzle Attachment" : "Add New Nozzle Attachment"}
                 open={isModalVisible}
@@ -417,14 +436,7 @@ const NozzleManagement = () => {
                     onFinish={handleSubmit}
                 >
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                        <Form.Item
-                            name="attachmentId"
-                            label="Attachment ID"
-                            rules={[{ required: true, message: 'Please enter attachment ID' }]}
-                        >
-                            <Input prefix={<AimOutlined />} placeholder="Enter attachment ID" />
-                        </Form.Item>
-
+                        {/* Removed Attachment ID and Nozzle Position fields */}
                         <Form.Item
                             name="dispenserId"
                             label="Dispenser"
@@ -432,11 +444,12 @@ const NozzleManagement = () => {
                         >
                             <Select placeholder="Select dispenser">
                                 {dispensers.map(dispenser => (
-                                    <Option key={dispenser.id} value={dispenser.id}>{dispenser.dispenserName}</Option>
+                                    <Option key={dispenser.id} value={dispenser.id}>
+                                        {dispenser.dispenserName}
+                                    </Option>
                                 ))}
                             </Select>
                         </Form.Item>
-
                         <Form.Item
                             name="productId"
                             label="Product"
@@ -444,29 +457,24 @@ const NozzleManagement = () => {
                         >
                             <Select placeholder="Select product">
                                 {products.map(product => (
-                                    <Option key={product.id} value={product.id}>{product.productName}</Option>
+                                    <Option key={product.id} value={product.id}>
+                                        {product.productName}
+                                    </Option>
                                 ))}
                             </Select>
                         </Form.Item>
-
                         <Form.Item
-                            name="nozzlePosition"
-                            label="Nozzle Position"
-                            rules={[{ required: true, message: 'Please select nozzle position' }]}
+                            name="openingReading"
+                            label="Opening Reading"
+                            rules={[{ required: true, message: 'Please enter opening reading' }]}
                         >
-                            <Select placeholder="Select nozzle position">
-                                <Option value="1">Nozzle 1</Option>
-                                <Option value="2">Nozzle 2</Option>
-                                <Option value="3">Nozzle 3</Option>
-                                <Option value="4">Nozzle 4</Option>
-                            </Select>
+                            <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter opening reading" />
                         </Form.Item>
                     </div>
-
                     <Form.Item>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                             <Button onClick={handleCancel}>Cancel</Button>
-                            <Button type="primary" htmlType="submit" loading={submitLoading}>
+                            <Button type="primary" htmlType="submit" loading={submitLoading} disabled={submitLoading}>
                                 {editingId ? 'Update' : 'Create'}
                             </Button>
                         </div>
@@ -474,6 +482,7 @@ const NozzleManagement = () => {
                 </Form>
             </Modal>
 
+            {/* Record Reading Modal */}
             <Modal
                 title="Record Nozzle Reading"
                 open={isReadingModalVisible}
@@ -486,20 +495,15 @@ const NozzleManagement = () => {
                         layout="vertical"
                         onFinish={handleReadingSubmit}
                     >
-                        <Form.Item
-                            name="nozzleId"
-                            hidden
-                        >
+                        <Form.Item name="nozzleId" hidden>
                             <Input />
                         </Form.Item>
-
                         <Form.Item
                             name="previousReading"
                             label="Previous Reading"
                         >
                             <InputNumber disabled={!isAdmin} style={{ width: '100%' }} />
                         </Form.Item>
-
                         <Form.Item
                             name="currentReading"
                             label="Current Reading"
@@ -517,11 +521,37 @@ const NozzleManagement = () => {
                         >
                             <InputNumber style={{ width: '100%' }} placeholder="Enter current reading" />
                         </Form.Item>
-
+                        {/* New field: Select Tank */}
+                        <Form.Item
+                            name="tankId"
+                            label="Select Tank"
+                            rules={[{ required: true, message: 'Please select a tank' }]}
+                        >
+                            <Select placeholder="Select tank">
+                                {tanks.map(tank => (
+                                    <Option key={tank.id} value={tank.id}>
+                                        {tank.tankName}
+                                    </Option>
+                                ))}
+                            </Select>
+                        </Form.Item>
+                        {/* New field: Update Product Price */}
+                        <Form.Item
+                            name="newPrice"
+                            label="New Product Price (PKR)"
+                        >
+                            <InputNumber
+                                min={0}
+                                style={{ width: '100%' }}
+                                placeholder="Enter new product price if updating"
+                                formatter={value => `₨ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                                parser={value => value.replace(/₨\s?|(,*)/g, '')}
+                            />
+                        </Form.Item>
                         <Form.Item>
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                                 <Button onClick={handleReadingCancel}>Cancel</Button>
-                                <Button type="primary" htmlType="submit" loading={recordReadingLoading}>
+                                <Button type="primary" htmlType="submit" loading={recordReadingLoading} disabled={recordReadingLoading}>
                                     Record Reading
                                 </Button>
                             </div>
@@ -530,6 +560,7 @@ const NozzleManagement = () => {
                 )}
             </Modal>
 
+            {/* Reading History Modal */}
             <Modal
                 title="Reading History"
                 open={isHistoryModalVisible}

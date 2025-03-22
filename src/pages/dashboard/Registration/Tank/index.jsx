@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Table, Button, Modal, Form, Input, Space, Card,
-    Typography, message, Tooltip, Popconfirm, Progress, InputNumber, DatePicker
+    Typography, message, Tooltip, Popconfirm, Progress, InputNumber, DatePicker, Select, Statistic, Row, Col
 } from 'antd';
 import moment from 'moment';
 import {
@@ -14,9 +14,11 @@ import { exportToExcel } from '../../../../services/exportService';
 import { useAuth } from '../../../../context/AuthContext';
 
 const { Title } = Typography;
+const { Option } = Select;
 
 const TankManagement = () => {
     const [tanks, setTanks] = useState([]);
+    const [productsList, setProductsList] = useState([]); // For linking tanks with products
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [form] = Form.useForm();
     const [editingId, setEditingId] = useState(null);
@@ -25,12 +27,14 @@ const TankManagement = () => {
     const [deleteLoading, setDeleteLoading] = useState(false);
     const [exportLoading, setExportLoading] = useState(false);
 
-    const { isAdmin } = useAuth(); // Assuming your auth context provides this
+    const { isAdmin } = useAuth();
 
     useEffect(() => {
         fetchTanks();
+        fetchProducts();
     }, []);
 
+    // Fetch tanks from Firestore
     const fetchTanks = async () => {
         setLoading(true);
         try {
@@ -47,19 +51,30 @@ const TankManagement = () => {
         }
     };
 
+    // Fetch products to link with tanks
+    const fetchProducts = async () => {
+        try {
+            const querySnapshot = await getDocs(collection(db, "products"));
+            const products = querySnapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            setProductsList(products);
+        } catch (error) {
+            message.error("Failed to fetch products: " + error.message);
+        }
+    };
+
     const showModal = (record = null) => {
         if (record) {
             setEditingId(record.id);
-            form.setFieldsValue({
-                ...record,
-                lastUpdated: record.lastUpdated ? moment(record.lastUpdated.toDate()) : null
-            });
+            form.setFieldsValue(record);
         } else {
             setEditingId(null);
             form.resetFields();
-            // Set default value for new records
+            // Optionally, set a default value for openingStock if needed
             form.setFieldsValue({
-                lastUpdated: moment()
+                openingStock: 0
             });
         }
         setIsModalVisible(true);
@@ -73,18 +88,17 @@ const TankManagement = () => {
     const handleSubmit = async (values) => {
         setSubmitLoading(true);
         try {
-            const formattedValues = {
-                ...values,
-                lastUpdated: values.lastUpdated.toDate(), // Convert Moment to Date
-            };
-
+            // If openingStock is not provided, set it to 0
+            if (values.openingStock === undefined) {
+                values.openingStock = 0;
+            }
             if (editingId) {
-                await updateDoc(doc(db, "tanks", editingId), formattedValues);
+                await updateDoc(doc(db, "tanks", editingId), values);
                 message.success("Tank updated successfully");
             } else {
                 await addDoc(collection(db, "tanks"), {
-                    ...formattedValues,
-                    createdAt: new Date(),
+                    ...values,
+                    createdAt: new Date()
                 });
                 message.success("Tank created successfully");
             }
@@ -122,26 +136,21 @@ const TankManagement = () => {
         }
     };
 
-    useEffect(() => {
-        tanks.forEach(tank => {
-            if (tank.currentLevel < tank.alertThreshold) {
-                message.warning(`Tank ${tank.tankName} is below threshold!`);
-            }
-        });
-    }, [tanks]);
-
     const columns = [
-        {
-            title: 'Tank ID',
-            dataIndex: 'tankId',
-            key: 'tankId',
-            sorter: (a, b) => a.tankId.localeCompare(b.tankId),
-        },
         {
             title: 'Tank Name',
             dataIndex: 'tankName',
             key: 'tankName',
             sorter: (a, b) => a.tankName.localeCompare(b.tankName),
+        },
+        {
+            title: 'Product',
+            dataIndex: 'product',
+            key: 'product',
+            render: (productId) => {
+                const product = productsList.find(p => p.id === productId);
+                return product ? product.productName : 'N/A';
+            }
         },
         {
             title: 'Capacity (Liters)',
@@ -150,28 +159,23 @@ const TankManagement = () => {
             sorter: (a, b) => a.capacity - b.capacity,
         },
         {
-            title: 'Current Level (Liters)',
-            dataIndex: 'currentLevel',
-            key: 'currentLevel',
-            render: (level, record) => (
+            title: 'Opening Stock (Liters)',
+            dataIndex: 'openingStock',
+            key: 'openingStock',
+            render: (stock, record) => (
                 <Progress
-                    percent={(level / record.capacity) * 100}
+                    percent={record.capacity ? (stock / record.capacity) * 100 : 0}
                     size="small"
-                    status={level / record.capacity < 0.2 ? 'exception' : 'normal'}
+                    status={record.capacity && (stock / record.capacity) < 0.2 ? 'exception' : 'normal'}
                 />
             ),
-            sorter: (a, b) => a.currentLevel - b.currentLevel,
+            sorter: (a, b) => a.openingStock - b.openingStock,
         },
         {
-            title: 'Last Updated',
-            dataIndex: 'lastUpdated',
-            key: 'lastUpdated',
-            render: (lastUpdated) => lastUpdated ? moment(lastUpdated.toDate()).format('DD/MM/YYYY HH:mm:ss') : 'Never',
-            sorter: (a, b) => {
-                if (!a.lastUpdated) return -1;
-                if (!b.lastUpdated) return 1;
-                return a.lastUpdated.toDate() - b.lastUpdated.toDate();
-            },
+            title: 'Low Level Alert Threshold (Liters)',
+            dataIndex: 'alertThreshold',
+            key: 'alertThreshold',
+            sorter: (a, b) => a.alertThreshold - b.alertThreshold,
         },
         {
             title: 'Actions',
@@ -256,19 +260,25 @@ const TankManagement = () => {
                 >
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                         <Form.Item
-                            name="tankId"
-                            label="Tank ID"
-                            rules={[{ required: true, message: 'Please enter tank ID' }]}
-                        >
-                            <Input prefix={<DatabaseOutlined />} placeholder="Enter tank ID" />
-                        </Form.Item>
-
-                        <Form.Item
                             name="tankName"
                             label="Tank Name"
                             rules={[{ required: true, message: 'Please enter tank name' }]}
                         >
                             <Input placeholder="Enter tank name" />
+                        </Form.Item>
+
+                        <Form.Item
+                            name="product"
+                            label="Product"
+                            rules={[{ required: true, message: 'Please select a product' }]}
+                        >
+                            <Select placeholder="Select product">
+                                {productsList.map(product => (
+                                    <Option key={product.id} value={product.id}>
+                                        {product.productName}
+                                    </Option>
+                                ))}
+                            </Select>
                         </Form.Item>
 
                         <Form.Item
@@ -280,11 +290,11 @@ const TankManagement = () => {
                         </Form.Item>
 
                         <Form.Item
-                            name="currentLevel"
-                            label="Current Level (Liters)"
-                            rules={[{ required: true, message: 'Please enter current level' }]}
+                            name="openingStock"
+                            label="Opening Stock (Liters)"
+                            rules={[{ required: true, message: 'Please enter opening stock' }]}
                         >
-                            <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter current level in liters" />
+                            <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter opening stock in liters" />
                         </Form.Item>
 
                         <Form.Item
@@ -294,27 +304,12 @@ const TankManagement = () => {
                         >
                             <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter threshold" />
                         </Form.Item>
-
-                        <Form.Item
-                            name="lastUpdated"
-                            label="Last Updated Date/Time"
-                            rules={[{ required: true, message: 'Please select date and time' }]}
-                        >
-                            <DatePicker
-                                showTime
-                                format="YYYY-MM-DD HH:mm:ss"
-                                style={{ width: '100%' }}
-                                disabled={!isAdmin}
-                                placeholder="Select date and time"
-                                prefix={<CalendarOutlined />}
-                            />
-                        </Form.Item>
                     </div>
 
                     <Form.Item>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                             <Button onClick={handleCancel}>Cancel</Button>
-                            <Button type="primary" htmlType="submit" loading={submitLoading}>
+                            <Button type="primary" htmlType="submit" loading={submitLoading} disabled={submitLoading}>
                                 {editingId ? 'Update' : 'Create'}
                             </Button>
                         </div>

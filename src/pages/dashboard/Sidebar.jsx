@@ -252,6 +252,11 @@ const roleMenuItems = {
       ]
     },
     {
+      key: 'reports',
+      icon: <BarChartOutlined style={{ fontSize: '18px' }} />,
+      label: <Link to="/dashboard/daily-report">Daily Report</Link>
+    },
+    {
       key: 'user-management',
       icon: <TeamOutlined style={{ fontSize: '18px' }} />,
       label: <Link to="/dashboard/user-management">User Management</Link>
@@ -264,39 +269,74 @@ const roleMenuItems = {
   ],
   manager: [
     {
-      key: 'fuel-inventory',
-      icon: <DatabaseOutlined style={{ fontSize: '18px' }} />,
-      label: <Link to="/dashboard/fuel-inventory">Fuel Inventory</Link>
+      key: 'registration',
+      icon: <BarChartOutlined style={{ fontSize: '18px' }} />,
+      label: 'Registration',
+      children: [
+        {
+          key: 'accounts',
+          icon: <UserOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/registration/accounts">Accounts</Link>
+        },
+        {
+          key: 'products',
+          icon: <ShopOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/registration/products">Products</Link>
+        },
+        {
+          key: 'tanks',
+          icon: <DatabaseOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/registration/tanks">Tanks</Link>
+        },
+        {
+          key: 'dispensers',
+          icon: <ContainerOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/registration/dispensers">Dispensers</Link>
+        },
+        {
+          key: 'nozzle-attachment',
+          icon: <ToolOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/registration/nozzle-attachments">Nozzle Attachments</Link>
+        },
+        {
+          key: 'dip-chart',
+          icon: <LineChartOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/registration/dip-charts">Dip Charts</Link>
+        },
+      ]
     },
     {
-      key: 'sales',
-      icon: <DollarOutlined style={{ fontSize: '18px' }} />,
-      label: <Link to="/dashboard/sales">Sales</Link>
-    },
-    {
-      key: 'pumps',
-      icon: <CarOutlined style={{ fontSize: '18px' }} />,
-      label: <Link to="/dashboard/pumps">Pumps</Link>
-    },
-    {
-      key: 'employees',
-      icon: <TeamOutlined style={{ fontSize: '18px' }} />,
-      label: <Link to="/dashboard/employees">Employees</Link>
-    },
-    {
-      key: 'maintenance',
-      icon: <ToolOutlined style={{ fontSize: '18px' }} />,
-      label: <Link to="/dashboard/maintenance">Maintenance</Link>
+      key: 'invoices',
+      icon: <ShoppingCartOutlined style={{ fontSize: '18px' }} />,
+      label: 'Invoices',
+      children: [
+        {
+          key: 'purchase',
+          icon: <ShoppingCartOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/invoices/purchase">Purchase</Link>
+        },
+        {
+          key: 'purchase-return',
+          icon: <RollbackOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/invoices/purchase-return">Purchase Return</Link>
+        },
+        {
+          key: 'sale',
+          icon: <DollarOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/invoices/sale">Sales</Link>
+        },
+        {
+          key: 'sale-return',
+          icon: <SwapOutlined style={{ fontSize: '16px' }} />,
+          label: <Link to="/dashboard/invoices/sale-return">Sales Return</Link>
+        },
+      ]
     },
     {
       key: 'reports',
       icon: <BarChartOutlined style={{ fontSize: '18px' }} />,
-      label: 'Reports',
-      children: [
-        { key: 'sales-report', label: <Link to="/dashboard/reports/sales">Sales Report</Link> },
-        { key: 'inventory-report', label: <Link to="/dashboard/reports/inventory">Inventory Report</Link> }
-      ]
-    }
+      label: <Link to="/dashboard/daily-report">Daily Report</Link>
+    },
   ],
   salesman: [
     {
@@ -309,11 +349,6 @@ const roleMenuItems = {
       icon: <TeamOutlined style={{ fontSize: '18px' }} />,
       label: <Link to="/dashboard/customers">Customers</Link>
     },
-    {
-      key: 'shifts',
-      icon: <ScheduleOutlined style={{ fontSize: '18px' }} />,
-      label: <Link to="/dashboard/shifts">Shifts</Link>
-    }
   ]
 };
 

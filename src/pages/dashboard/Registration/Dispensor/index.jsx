@@ -85,11 +85,10 @@ const DispenserManagement = () => {
         setSubmitting(true);
         try {
             const formattedValues = { ...values };
-            // Convert moment object to string
+            // Convert moment object to string for lastMaintenance if provided
             if (formattedValues.lastMaintenance) {
                 formattedValues.lastMaintenance = formattedValues.lastMaintenance.format('YYYY-MM-DD');
             }
-
             if (editingId) {
                 await updateDoc(doc(db, "dispensers", editingId), formattedValues);
                 message.success("Dispenser updated successfully");
@@ -133,23 +132,10 @@ const DispenserManagement = () => {
 
     const columns = [
         {
-            title: 'Dispenser ID',
-            dataIndex: 'dispenserId',
-            key: 'dispenserId',
-            sorter: (a, b) => a.dispenserId.localeCompare(b.dispenserId),
-            responsive: ['md'],
-        },
-        {
             title: 'Dispenser Name',
             dataIndex: 'dispenserName',
             key: 'dispenserName',
             sorter: (a, b) => a.dispenserName.localeCompare(b.dispenserName),
-        },
-        {
-            title: 'Location',
-            dataIndex: 'location',
-            key: 'location',
-            responsive: ['lg'],
         },
         {
             title: 'Status',
@@ -202,6 +188,7 @@ const DispenserManagement = () => {
                             onConfirm={() => handleDelete(record.id)}
                             okText="Yes"
                             cancelText="No"
+                            okButtonProps={{ loading: deleting === record.id }}
                         >
                             <Button
                                 danger
@@ -278,32 +265,11 @@ const DispenserManagement = () => {
                         <div className="row">
                             <div className="col-12 col-md-6">
                                 <Form.Item
-                                    name="dispenserId"
-                                    label="Dispenser ID"
-                                    rules={[{ required: true, message: 'Please enter dispenser ID' }]}
-                                >
-                                    <Input prefix={<ApiOutlined />} placeholder="Enter dispenser ID" />
-                                </Form.Item>
-                            </div>
-                            <div className="col-12 col-md-6">
-                                <Form.Item
                                     name="dispenserName"
                                     label="Dispenser Name"
                                     rules={[{ required: true, message: 'Please enter dispenser name' }]}
                                 >
                                     <Input placeholder="Enter dispenser name" />
-                                </Form.Item>
-                            </div>
-                        </div>
-
-                        <div className="row">
-                            <div className="col-12 col-md-6">
-                                <Form.Item
-                                    name="location"
-                                    label="Location"
-                                    rules={[{ required: true, message: 'Please enter location' }]}
-                                >
-                                    <Input placeholder="Enter location" />
                                 </Form.Item>
                             </div>
                             <div className="col-12 col-md-6">

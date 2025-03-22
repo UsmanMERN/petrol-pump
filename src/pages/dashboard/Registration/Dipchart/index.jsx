@@ -1,27 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import {
     Table, Button, Modal, Form, Input, Select, Space, Card,
-    Typography, message, Tooltip, Popconfirm, InputNumber,
-    Upload, Row, Col, Divider, Progress
+    Typography, message, Tooltip, Popconfirm, InputNumber, Upload,
+    Row, Col, Divider, Progress, Statistic, DatePicker
 } from 'antd';
+import moment from 'moment';
 import {
     PlusOutlined, EditOutlined, DeleteOutlined,
     FileExcelOutlined, UploadOutlined, DatabaseOutlined,
     LineChartOutlined, ClockCircleOutlined, LockOutlined
 } from '@ant-design/icons';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where, getDoc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc } from 'firebase/firestore';
 import { exportToExcel } from '../../../../services/exportService';
-import { db } from '../../../../config/firebase';
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, LineElement, PointElement, LinearScale, CategoryScale } from 'chart.js';
-import { useAuth } from '../../../../context/AuthContext'; // Assuming you have an auth context
+import { useAuth } from '../../../../context/AuthContext';
+import { db } from '../../../../config/firebase';
 
 ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale);
 
 const { Title } = Typography;
 const { Option } = Select;
 
-// Helper to format date to YYYY-MM-DDThh:mm (for datetime-local input)
+// Helper to format a Date for datetime-local inputs
 const formatDateTimeLocal = (date) => {
     const d = new Date(date);
     const year = d.getFullYear();
@@ -33,39 +34,52 @@ const formatDateTimeLocal = (date) => {
 };
 
 const DipChartManagement = () => {
+    // Data states
     const [dipCharts, setDipCharts] = useState([]);
     const [tanks, setTanks] = useState([]);
-    const [isModalVisible, setIsModalVisible] = useState(false);
+    const [products, setProducts] = useState([]);
+
+    // Modal visibility states
+    const [isModalVisible, setIsModalVisible] = useState(false); // Add/Edit dip chart
     const [isBulkModalVisible, setIsBulkModalVisible] = useState(false);
     const [isDateModalVisible, setIsDateModalVisible] = useState(false);
+    const [isGainLossModalVisible, setIsGainLossModalVisible] = useState(false);
+    // NEW: Modal for recording a new dip reading for a tank
+    const [isDipReadingModalVisible, setIsDipReadingModalVisible] = useState(false);
+    // Modal for chart visualization
+    const [isChartModalVisible, setIsChartModalVisible] = useState(false);
+    // State for chart data
+    const [chartData, setChartData] = useState(null);
+
+    // For gain/loss calculation
+    const [selectedTankForCalc, setSelectedTankForCalc] = useState(null);
+    const [gainLossData, setGainLossData] = useState(null);
+
+    // Form instances
     const [form] = Form.useForm();
     const [bulkForm] = Form.useForm();
     const [dateForm] = Form.useForm();
+    // NEW: Dip Reading Form
+    const [readingForm] = Form.useForm();
+
+    // Other states
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(false);
     const [buttonLoading, setButtonLoading] = useState(false);
     const [dateButtonLoading, setDateButtonLoading] = useState(false);
-    const [selectedTank, setSelectedTank] = useState(null);
-    const [chartData, setChartData] = useState(null);
     const [currentDateTime, setCurrentDateTime] = useState(new Date());
-    // const [isAdmin, setIsAdmin] = useState(false);
+    const [recordReadingLoading, setRecordReadingLoading] = useState(false);
 
-    const { user: currentUser, isAdmin } = useAuth(); // Assuming you have an auth context with currentUser
+    const { user: currentUser, isAdmin } = useAuth();
 
     useEffect(() => {
         fetchDipCharts();
         fetchTanks();
-        // checkAdminStatus();
+        fetchProducts();
         fetchStoredDateTime();
-
-        // Update date and time every minute
-        const dateTimeInterval = setInterval(() => {
-            setCurrentDateTime(new Date());
-        }, 60000);
-
-        return () => clearInterval(dateTimeInterval);
+        const interval = setInterval(() => setCurrentDateTime(new Date()), 60000);
+        return () => clearInterval(interval);
     }, []);
-
 
     const fetchStoredDateTime = async () => {
         try {
@@ -82,13 +96,13 @@ const DipChartManagement = () => {
         setLoading(true);
         try {
             const querySnapshot = await getDocs(collection(db, "dipcharts"));
-            const dipChartList = querySnapshot.docs.map(docSnap => ({
+            const list = querySnapshot.docs.map(docSnap => ({
                 id: docSnap.id,
                 ...docSnap.data(),
                 createdAt: docSnap.data().createdAt || new Date().toISOString(),
                 updatedAt: docSnap.data().updatedAt || new Date().toISOString()
             }));
-            setDipCharts(dipChartList);
+            setDipCharts(list);
         } catch (error) {
             message.error("Failed to fetch dip charts: " + error.message);
         } finally {
@@ -99,20 +113,33 @@ const DipChartManagement = () => {
     const fetchTanks = async () => {
         try {
             const querySnapshot = await getDocs(collection(db, "tanks"));
-            const tankList = querySnapshot.docs.map(docSnap => ({
+            const list = querySnapshot.docs.map(docSnap => ({
                 id: docSnap.id,
                 ...docSnap.data()
             }));
-            setTanks(tankList);
+            setTanks(list);
         } catch (error) {
             message.error("Failed to fetch tanks: " + error.message);
         }
     };
 
+    const fetchProducts = async () => {
+        try {
+            const querySnapshot = await getDocs(collection(db, "products"));
+            const list = querySnapshot.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data()
+            }));
+            setProducts(list);
+        } catch (error) {
+            message.error("Failed to fetch products: " + error.message);
+        }
+    };
+
+    // Show Add/Edit Dip Chart modal
     const showModal = (record = null) => {
         if (record) {
             setEditingId(record.id);
-            // Set the form fields including recordedAt in datetime-local format
             form.setFieldsValue({
                 ...record,
                 recordedAt: record.recordedAt
@@ -121,11 +148,8 @@ const DipChartManagement = () => {
             });
         } else {
             setEditingId(null);
-            // For a new entry, prefill recordedAt with current date/time (as datetime-local string)
             form.resetFields();
-            form.setFieldsValue({
-                recordedAt: formatDateTimeLocal(new Date())
-            });
+            form.setFieldsValue({ recordedAt: formatDateTimeLocal(new Date()) });
         }
         setIsModalVisible(true);
     };
@@ -143,6 +167,21 @@ const DipChartManagement = () => {
         setIsDateModalVisible(true);
     };
 
+    // Show Gain/Loss modal
+    const showGainLossModal = () => {
+        setIsGainLossModalVisible(true);
+        setSelectedTankForCalc(null);
+        setGainLossData(null);
+    };
+
+    // Show Dip Reading modal (for recording a new dip reading for a tank)
+    const showDipReadingModal = () => {
+        // Reset reading form and let user select a tank
+        readingForm.resetFields();
+        setSelectedTankForCalc(null);
+        setIsDipReadingModalVisible(true);
+    };
+
     const handleCancel = () => {
         setIsModalVisible(false);
         form.resetFields();
@@ -158,18 +197,17 @@ const DipChartManagement = () => {
         dateForm.resetFields();
     };
 
+    // Admin Date/Time update submit
     const handleDateSubmit = async (values) => {
         if (!isAdmin) {
             message.error("Only administrators can update the date and time");
             return;
         }
-
         setDateButtonLoading(true);
         try {
             const dateValue = new Date(values.date);
             const [hours, minutes] = values.time.split(':').map(Number);
             dateValue.setHours(hours, minutes);
-            // Store in Firestore
             await setDoc(doc(db, "settings", "dipChartDateTime"), {
                 timestamp: dateValue.toISOString(),
                 updatedBy: currentUser?.uid || 'unknown',
@@ -185,15 +223,11 @@ const DipChartManagement = () => {
         }
     };
 
+    // Add/Edit Dip Chart submit
     const handleSubmit = async (values) => {
         setButtonLoading(true);
         try {
             const timestamp = new Date().toISOString();
-            // Process the recordedAt field:
-            // For admin: use the provided value (converted to ISO)
-            // For non-admin:
-            //   - If new record: automatically set to current time
-            //   - If updating: preserve the existing recordedAt field
             let newRecordedAt = values.recordedAt;
             if (isAdmin) {
                 newRecordedAt = new Date(values.recordedAt).toISOString();
@@ -205,7 +239,6 @@ const DipChartManagement = () => {
                     newRecordedAt = existing?.recordedAt || new Date().toISOString();
                 }
             }
-
             if (editingId) {
                 await updateDoc(doc(db, "dipcharts", editingId), {
                     ...values,
@@ -236,8 +269,6 @@ const DipChartManagement = () => {
         try {
             const { tankId, dipChartData } = values;
             const timestamp = new Date().toISOString();
-
-            // Create array of entries from text input
             const entries = dipChartData.split('\n')
                 .filter(line => line.trim().length > 0)
                 .map(line => {
@@ -247,18 +278,16 @@ const DipChartManagement = () => {
                         chartCode: `${tankId}-${inches}`,
                         dipInches: parseFloat(inches),
                         dipLiters: parseFloat(liters),
-                        recordedAt: new Date().toISOString(), // Automatically set for bulk entries
+                        recordedAt: new Date().toISOString(),
                         createdAt: timestamp,
                         updatedAt: timestamp
                     };
                 });
-
             let successCount = 0;
             for (const entry of entries) {
                 await addDoc(collection(db, "dipcharts"), entry);
                 successCount++;
             }
-
             message.success(`${successCount} dip chart entries added successfully`);
             setIsBulkModalVisible(false);
             fetchDipCharts();
@@ -294,6 +323,7 @@ const DipChartManagement = () => {
         }
     };
 
+    // Prepare chart data for visualization and open chart modal
     const prepareChartData = (tankId) => {
         const tankDipCharts = dipCharts
             .filter(d => d.tankId === tankId)
@@ -307,20 +337,103 @@ const DipChartManagement = () => {
                 tension: 0.1,
             }],
         });
+        setIsChartModalVisible(true);
     };
 
-    const formatDate = (date) => {
-        return date.toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
+    // NEW: Handle submission of a new dip reading for a tank
+    const handleDipReadingSubmit = async (values) => {
+        setRecordReadingLoading(true);
+        try {
+            const { tankId, currentReading, newPrice } = values;
+            // Get the tank document to obtain original capacity
+            const tank = tanks.find(t => t.id === tankId);
+            if (!tank) {
+                message.error("Tank not found");
+                setRecordReadingLoading(false);
+                return;
+            }
+            const originalVolume = tank.capacity; // original volume of tank
+            // Find latest dip chart entry for this tank to get previous reading
+            const tankDipCharts = dipCharts
+                .filter(d => d.tankId === tankId)
+                .sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt));
+            const previousReading = tankDipCharts.length ? tankDipCharts[0].dipLiters : originalVolume;
+            // Calculate sold volume: assuming dip reading decreases as fuel is sold
+            const soldVolume = previousReading - currentReading;
+            if (soldVolume < 0) {
+                message.error("Current reading cannot be greater than previous reading");
+                setRecordReadingLoading(false);
+                return;
+            }
+            // Calculate price impact using the linked product (if any)
+            let priceDifference = 0;
+            if (tank.productId) {
+                const product = products.find(p => p.id === tank.productId);
+                if (product && product.salesPrice) {
+                    priceDifference = soldVolume * product.salesPrice;
+                }
+            }
+            // Update tank's current volume (assume we store currentVolume)
+            const tankRef = doc(db, "tanks", tankId);
+            await updateDoc(tankRef, { currentVolume: currentReading });
+            // Add a new dip chart entry for this reading
+            await addDoc(collection(db, "dipcharts"), {
+                tankId,
+                chartCode: `${tankId}-${moment().format('YYYYMMDDHHmmss')}`,
+                dipInches: null, // Not provided here
+                dipLiters: currentReading,
+                recordedAt: new Date().toISOString(),
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+            // If a new price is provided, update the product's sales price
+            if (newPrice !== undefined && newPrice !== null) {
+                await updateDoc(doc(db, "products", tank.productId), { salesPrice: newPrice });
+            }
+            message.success("Dip reading recorded successfully");
+            setIsDipReadingModalVisible(false);
+            fetchDipCharts();
+            fetchTanks();
+        } catch (error) {
+            message.error("Operation failed: " + error.message);
+        } finally {
+            setRecordReadingLoading(false);
+        }
     };
 
-    const formatTime = (date) => {
-        return date.toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit'
+    // NEW: Handle Gain/Loss modal submission
+    const handleGainLossModalSubmit = (values) => {
+        const { tankId } = values;
+        setSelectedTankForCalc(tankId);
+        // Calculate gain/loss based on tank original capacity and latest dip reading
+        const tank = tanks.find(t => t.id === tankId);
+        if (!tank) {
+            message.error("Tank not found");
+            return;
+        }
+        const originalVolume = tank.capacity;
+        const tankDipCharts = dipCharts
+            .filter(d => d.tankId === tankId)
+            .sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt));
+        if (!tankDipCharts.length) {
+            message.error("No dip chart entries found for this tank");
+            return;
+        }
+        const latestDip = tankDipCharts[0];
+        const remainingVolume = latestDip.dipLiters;
+        const soldVolume = originalVolume - remainingVolume;
+        let priceDifference = 0;
+        if (tank.productId) {
+            const product = products.find(p => p.id === tank.productId);
+            if (product && product.salesPrice) {
+                priceDifference = soldVolume * product.salesPrice;
+            }
+        }
+        setGainLossData({
+            originalVolume,
+            remainingVolume,
+            soldVolume,
+            priceDifference
         });
     };
 
@@ -399,9 +512,27 @@ const DipChartManagement = () => {
             key: 'actions',
             render: (_, record) => (
                 <Space size="small">
+                    <Tooltip title="Record Dip Reading">
+                        <Button
+                            type="link"
+                            onClick={showDipReadingModal}
+                            size="small"
+                        >
+                            Record Dip
+                        </Button>
+                    </Tooltip>
+                    <Tooltip title="Daily Gain/Loss">
+                        <Button
+                            type="link"
+                            onClick={showGainLossModal}
+                            size="small"
+                        >
+                            Daily Gain/Loss
+                        </Button>
+                    </Tooltip>
                     <Tooltip title="Edit">
                         <Button
-                            type="primary"
+                            type="default"
                             icon={<EditOutlined />}
                             onClick={() => showModal(record)}
                             size="small"
@@ -415,12 +546,12 @@ const DipChartManagement = () => {
                             onConfirm={() => handleDelete(record.id)}
                             okText="Yes"
                             cancelText="No"
+                            okButtonProps={{ loading: buttonLoading }}
                         >
                             <Button
                                 danger
-                                icon={<DeleteOutlined />}
+                                icon={buttonLoading ? <LoadingOutlined /> : <DeleteOutlined />}
                                 size="small"
-                                loading={buttonLoading}
                                 disabled={buttonLoading}
                             />
                         </Popconfirm>
@@ -429,10 +560,6 @@ const DipChartManagement = () => {
             ),
         },
     ];
-
-    const handleTankChange = (value) => {
-        setSelectedTank(value);
-    };
 
     return (
         <Card className="dipchart-management-container">
@@ -468,6 +595,22 @@ const DipChartManagement = () => {
                     >
                         Export to Excel
                     </Button>
+                    <Button
+                        type="default"
+                        onClick={showGainLossModal}
+                        loading={buttonLoading}
+                        disabled={buttonLoading}
+                    >
+                        Daily Gain/Loss
+                    </Button>
+                    <Button
+                        type="default"
+                        onClick={showDipReadingModal}
+                        loading={buttonLoading}
+                        disabled={buttonLoading}
+                    >
+                        Record Dip Reading
+                    </Button>
                 </Space>
             </div>
 
@@ -476,7 +619,7 @@ const DipChartManagement = () => {
                     <Select
                         placeholder="Filter by tank"
                         style={{ width: '100%' }}
-                        onChange={handleTankChange}
+                        onChange={(value) => setSelectedTankForCalc(value)}
                         allowClear
                         disabled={buttonLoading}
                     >
@@ -490,7 +633,7 @@ const DipChartManagement = () => {
             <div className="table-responsive">
                 <Table
                     columns={columns}
-                    dataSource={selectedTank ? dipCharts.filter(d => d.tankId === selectedTank) : dipCharts}
+                    dataSource={selectedTankForCalc ? dipCharts.filter(d => d.tankId === selectedTankForCalc) : dipCharts}
                     rowKey="id"
                     loading={loading}
                     pagination={{ pageSize: 10, responsive: true }}
@@ -499,7 +642,7 @@ const DipChartManagement = () => {
                 />
             </div>
 
-            {/* Add/Edit Modal */}
+            {/* Add/Edit Dip Chart Modal */}
             <Modal
                 title={editingId ? "Edit Dip Chart Entry" : "Add New Dip Chart Entry"}
                 open={isModalVisible}
@@ -534,17 +677,7 @@ const DipChartManagement = () => {
                     <Form.Item
                         name="dipInches"
                         label="Dip (inches)"
-                        rules={[
-                            { required: true, message: 'Please enter dip measurement' },
-                            ({ getFieldValue }) => ({
-                                validator(_, value) {
-                                    const tankId = getFieldValue('tankId');
-                                    const existing = dipCharts.find(d => d.tankId === tankId && d.dipInches === value && d.id !== editingId);
-                                    if (existing) return Promise.reject('This dip measurement already exists for the tank');
-                                    return Promise.resolve();
-                                },
-                            }),
-                        ]}
+                        rules={[{ required: true, message: 'Please enter dip measurement' }]}
                     >
                         <InputNumber min={0} step={0.1} style={{ width: '100%' }} placeholder="Enter dip in inches" />
                     </Form.Item>
@@ -562,25 +695,13 @@ const DipChartManagement = () => {
                         label="Recorded Date/Time"
                         rules={[{ required: true, message: 'Recorded date/time is required' }]}
                     >
-                        {/* 
-                          For admin, the field is editable.
-                          For non-admin, it is read-only.
-                        */}
-                        <Input
-                            type="datetime-local"
-                            readOnly={!isAdmin}
-                        />
+                        <Input type="datetime-local" readOnly={!isAdmin} />
                     </Form.Item>
 
                     <Form.Item>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                             <Button onClick={handleCancel} disabled={buttonLoading}>Cancel</Button>
-                            <Button
-                                type="primary"
-                                htmlType="submit"
-                                loading={buttonLoading}
-                                disabled={buttonLoading}
-                            >
+                            <Button type="primary" htmlType="submit" loading={buttonLoading} disabled={buttonLoading}>
                                 {editingId ? 'Update' : 'Create'}
                             </Button>
                         </div>
@@ -620,28 +741,22 @@ const DipChartManagement = () => {
                     >
                         <Input.TextArea
                             rows={10}
-                            placeholder="Example:
+                            placeholder={`Example:
 1,150
 2,300
-3,450"
+3,450`}
                         />
                     </Form.Item>
 
                     <Divider />
                     <Typography.Paragraph type="secondary">
-                        Note: Each line should contain a pair of values separated by a comma.
-                        The first value is the dip measurement in inches, the second value is the corresponding volume in liters.
+                        Note: Each line should contain a pair of values separated by a comma. The first value is the dip measurement in inches, the second value is the corresponding volume in liters.
                     </Typography.Paragraph>
 
                     <Form.Item>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                             <Button onClick={handleBulkCancel} disabled={buttonLoading}>Cancel</Button>
-                            <Button
-                                type="primary"
-                                htmlType="submit"
-                                loading={buttonLoading}
-                                disabled={buttonLoading}
-                            >
+                            <Button type="primary" htmlType="submit" loading={buttonLoading} disabled={buttonLoading}>
                                 Import Data
                             </Button>
                         </div>
@@ -700,16 +815,109 @@ const DipChartManagement = () => {
                 </Form>
             </Modal>
 
-            {chartData && (
-                <Modal
-                    title="Dip Chart Visualization"
-                    open={!!chartData}
-                    onCancel={() => setChartData(null)}
-                    footer={null}
+            {/* Daily Gain/Loss Modal */}
+            <Modal
+                title="Daily Gain/Loss Calculation"
+                open={isGainLossModalVisible}
+                onCancel={() => setIsGainLossModalVisible(false)}
+                footer={null}
+                width={500}
+            >
+                <Form layout="vertical" onFinish={handleGainLossModalSubmit}>
+                    <Form.Item
+                        name="tankId"
+                        label="Select Tank"
+                        rules={[{ required: true, message: 'Please select a tank' }]}
+                    >
+                        <Select placeholder="Select tank">
+                            {tanks.map(tank => (
+                                <Option key={tank.id} value={tank.id}>{tank.tankName}</Option>
+                            ))}
+                        </Select>
+                    </Form.Item>
+                    <Form.Item>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                            <Button onClick={() => setIsGainLossModalVisible(false)}>Cancel</Button>
+                            <Button type="primary" htmlType="submit">
+                                Calculate
+                            </Button>
+                        </div>
+                    </Form.Item>
+                </Form>
+                {gainLossData && (
+                    <div style={{ marginTop: '20px' }}>
+                        <Title level={5}>Daily Gain/Loss</Title>
+                        <p>Original Volume: {gainLossData.originalVolume} liters</p>
+                        <p>Remaining Volume: {gainLossData.remainingVolume} liters</p>
+                        <p>Sold Volume: {gainLossData.soldVolume} liters</p>
+                        <p>Price Impact: ₨{gainLossData.priceDifference.toFixed(2)}</p>
+                    </div>
+                )}
+            </Modal>
+
+            {/* Dip Chart Visualization Modal */}
+            <Modal
+                title="Dip Chart Visualization"
+                open={isChartModalVisible}
+                onCancel={() => setIsChartModalVisible(false)}
+                footer={null}
+            >
+                {chartData && <Line data={chartData} />}
+            </Modal>
+
+            {/* Record Dip Reading Modal */}
+            <Modal
+                title="Record Dip Reading"
+                open={isDipReadingModalVisible}
+                onCancel={() => { setIsDipReadingModalVisible(false); readingForm.resetFields(); }}
+                footer={null}
+            >
+                <Form
+                    form={readingForm}
+                    layout="vertical"
+                    onFinish={handleDipReadingSubmit}
                 >
-                    <Line data={chartData} />
-                </Modal>
-            )}
+                    <Form.Item
+                        name="tankId"
+                        label="Select Tank"
+                        rules={[{ required: true, message: 'Please select a tank' }]}
+                    >
+                        <Select placeholder="Select tank">
+                            {tanks.map(tank => (
+                                <Option key={tank.id} value={tank.id}>{tank.tankName}</Option>
+                            ))}
+                        </Select>
+                    </Form.Item>
+                    {/* previousReading will be auto-filled on submission */}
+                    <Form.Item
+                        name="currentReading"
+                        label="Current Reading (liters)"
+                        rules={[{ required: true, message: 'Please enter current reading' }]}
+                    >
+                        <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter current reading" />
+                    </Form.Item>
+                    <Form.Item
+                        name="newPrice"
+                        label="New Product Price (PKR)"
+                    >
+                        <InputNumber
+                            min={0}
+                            style={{ width: '100%' }}
+                            placeholder="Enter new product price if updating"
+                            formatter={value => `₨ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                            parser={value => value.replace(/₨\s?|(,*)/g, '')}
+                        />
+                    </Form.Item>
+                    <Form.Item>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                            <Button onClick={() => { setIsDipReadingModalVisible(false); readingForm.resetFields(); }}>Cancel</Button>
+                            <Button type="primary" htmlType="submit" loading={recordReadingLoading}>
+                                Record Reading
+                            </Button>
+                        </div>
+                    </Form.Item>
+                </Form>
+            </Modal>
         </Card>
     );
 };

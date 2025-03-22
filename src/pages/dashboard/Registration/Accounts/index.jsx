@@ -10,16 +10,22 @@ import {
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../../../config/firebase';
 import { exportToExcel } from '../../../../services/exportService';
+import { useAuth } from '../../../../context/AuthContext';
 
 const { Title } = Typography;
 const { Option } = Select;
 
 const AccountManagement = () => {
+    const { user } = useAuth();
+    // Check if the current user has the "manager" role
+    const isManager = user?.role?.some(role => role === 'manager');
+
     const [accounts, setAccounts] = useState([]);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [form] = Form.useForm();
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [submitLoading, setSubmitLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [currentDateTime, setCurrentDateTime] = useState(new Date());
 
@@ -69,8 +75,13 @@ const AccountManagement = () => {
     };
 
     const handleSubmit = async (values) => {
+        setSubmitLoading(true);
         try {
             const timestamp = new Date().toISOString();
+            // If user is a manager, force accountType to "customer"
+            if (isManager) {
+                values.accountType = "customer";
+            }
             if (editingId) {
                 await updateDoc(doc(db, "accounts", editingId), {
                     ...values,
@@ -89,6 +100,8 @@ const AccountManagement = () => {
             fetchAccounts();
         } catch (error) {
             message.error("Operation failed: " + error.message);
+        } finally {
+            setSubmitLoading(false);
         }
     };
 
@@ -109,12 +122,6 @@ const AccountManagement = () => {
 
     const columns = [
         {
-            title: 'Account ID',
-            dataIndex: 'accountId',
-            key: 'accountId',
-            sorter: (a, b) => a.accountId.localeCompare(b.accountId),
-        },
-        {
             title: 'Name',
             dataIndex: 'accountName',
             key: 'accountName',
@@ -124,15 +131,14 @@ const AccountManagement = () => {
             title: 'Account Type',
             dataIndex: 'accountType',
             key: 'accountType',
-            filters: [
-                { text: 'Assets', value: 'assets' },
-                { text: 'Customer', value: 'customer' },
-                { text: 'Supplier', value: 'supplier' },
-                { text: 'Staff', value: 'staff' },
-                { text: 'Bank', value: 'bank' },
-                { text: 'Expense', value: 'expense' },
-                { text: 'Partner', value: 'partner' },
-            ],
+            filters: isManager
+                ? [{ text: 'Customer', value: 'customer' }]
+                : [
+                    { text: 'Assets', value: 'assets' },
+                    { text: 'Customer', value: 'customer' },
+                    { text: 'Supplier', value: 'supplier' },
+                    { text: 'Staff', value: 'staff' },
+                ],
             onFilter: (value, record) => record.accountType === value,
         },
         {
@@ -208,25 +214,12 @@ const AccountManagement = () => {
         },
     ];
 
-    const filteredAccounts = accounts.filter(account =>
-        account.accountName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        account.accountId?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    const formatDate = (date) => {
-        return date.toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-    };
-
-    const formatTime = (date) => {
-        return date.toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    };
+    // Filter accounts based on the search term and, if the user is a manager, only show customers
+    const filteredAccounts = accounts.filter(account => {
+        const matchesSearch = account.accountName?.toLowerCase().includes(searchTerm.toLowerCase());
+        const isCustomer = isManager ? account.accountType === "customer" : true;
+        return matchesSearch && isCustomer;
+    });
 
     return (
         <Card className="account-management-container">
@@ -236,7 +229,7 @@ const AccountManagement = () => {
                 </div>
                 <Space wrap style={{ marginTop: '10px' }}>
                     <Input
-                        placeholder="Search by name or ID"
+                        placeholder="Search by name"
                         value={searchTerm}
                         onChange={e => setSearchTerm(e.target.value)}
                         style={{ width: 300 }}
@@ -290,14 +283,6 @@ const AccountManagement = () => {
                         gap: '16px'
                     }}>
                         <Form.Item
-                            name="accountId"
-                            label="Account ID"
-                            rules={[{ required: true, message: 'Please enter account ID' }]}
-                        >
-                            <Input placeholder="Enter account ID" />
-                        </Form.Item>
-
-                        <Form.Item
                             name="accountName"
                             label="Account Name"
                             rules={[{ required: true, message: 'Please enter account name' }]}
@@ -308,7 +293,6 @@ const AccountManagement = () => {
                         <Form.Item
                             name="address"
                             label="Address"
-                            rules={[{ required: true, message: 'Please enter address' }]}
                         >
                             <Input.TextArea placeholder="Enter address" />
                         </Form.Item>
@@ -316,7 +300,6 @@ const AccountManagement = () => {
                         <Form.Item
                             name="city"
                             label="City"
-                            rules={[{ required: true, message: 'Please enter city' }]}
                         >
                             <Input placeholder="Enter city" />
                         </Form.Item>
@@ -327,17 +310,6 @@ const AccountManagement = () => {
                             rules={[{ required: true, message: 'Please enter phone number' }]}
                         >
                             <Input placeholder="Enter phone number" />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="email"
-                            label="Email Address"
-                            rules={[
-                                { required: true, message: 'Please enter email address' },
-                                { type: 'email', message: 'Invalid email format' }
-                            ]}
-                        >
-                            <Input placeholder="Enter email address" />
                         </Form.Item>
 
                         <Form.Item
@@ -356,33 +328,21 @@ const AccountManagement = () => {
                         </Form.Item>
 
                         <Form.Item
-                            name="openCredit"
-                            label="Opening Credit (PKR)"
-                            rules={[{ required: true, message: 'Please enter opening credit' }]}
-                        >
-                            <InputNumber
-                                min={0}
-                                step={0.01}
-                                style={{ width: '100%' }}
-                                placeholder="0.00"
-                                formatter={value => `₨ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                                parser={value => value.replace(/₨\s?|(,*)/g, '')}
-                            />
-                        </Form.Item>
-
-                        <Form.Item
                             name="accountType"
                             label="Account Type"
                             rules={[{ required: true, message: 'Please select account type' }]}
                         >
                             <Select placeholder="Select account type">
-                                <Option value="assets">Assets</Option>
-                                <Option value="customer">Customer</Option>
-                                <Option value="supplier">Supplier</Option>
-                                <Option value="staff">Staff</Option>
-                                <Option value="bank">Bank</Option>
-                                <Option value="expense">Expense</Option>
-                                <Option value="partner">Partner</Option>
+                                {isManager ? (
+                                    <Option value="customer">Customer</Option>
+                                ) : (
+                                    <>
+                                        <Option value="assets">Assets</Option>
+                                        <Option value="customer">Customer</Option>
+                                        <Option value="supplier">Supplier</Option>
+                                        <Option value="staff">Staff</Option>
+                                    </>
+                                )}
                             </Select>
                         </Form.Item>
 
@@ -401,7 +361,7 @@ const AccountManagement = () => {
                     <Form.Item>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                             <Button onClick={handleCancel}>Cancel</Button>
-                            <Button type="primary" htmlType="submit">
+                            <Button type="primary" htmlType="submit" loading={submitLoading} disabled={submitLoading}>
                                 {editingId ? 'Update' : 'Create'}
                             </Button>
                         </div>

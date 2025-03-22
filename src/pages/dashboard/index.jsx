@@ -11,20 +11,8 @@ import Settings from "./Settings";
 import UserManagement from "./Users"
 import Registration from "./Registration"
 import Invoices from "./Invoices"
+import DailyReport from "./DailyReport"
 
-
-// Petrol Pump Management Dummy Components
-const FuelInventory = () => <h1>Fuel Inventory</h1>;
-const Sales = () => <h1>Sales</h1>;
-const Pumps = () => <h1>Pumps</h1>;
-const Employees = () => <h1>Employees</h1>;
-const Customers = () => <h1>Customers</h1>;
-const Maintenance = () => <h1>Maintenance</h1>;
-const Suppliers = () => <h1>Suppliers</h1>;
-const SalesReport = () => <h1>Sales Report</h1>;
-const InventoryReport = () => <h1>Inventory Report</h1>;
-const Profile = () => <h1>Profile</h1>;
-const Shifts = () => <h1>Shifts</h1>;
 
 export default function Dashboard() {
     const { user } = useAuth();
@@ -41,117 +29,14 @@ export default function Dashboard() {
                 <Route index element={<DashboardHome />} />
 
                 {/* Common routes */}
-                <Route path="profile" element={<Profile />} />
                 <Route path="settings" element={<Settings />} />
-
-                {/* Petrol Pump Management Routes */}
-                <Route
-                    path="fuel-inventory"
-                    element={
-                        <PrivateRoute
-                            component={FuelInventory}
-                            allowedRoles={["salesman", "manager", "admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
-                <Route
-                    path="sales"
-                    element={
-                        <PrivateRoute
-                            component={Sales}
-                            allowedRoles={["salesman", "manager", "admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
-                <Route
-                    path="pumps"
-                    element={
-                        <PrivateRoute
-                            component={Pumps}
-                            allowedRoles={["manager", "admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
-                <Route
-                    path="employees"
-                    element={
-                        <PrivateRoute
-                            component={Employees}
-                            allowedRoles={["manager", "admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
-                <Route
-                    path="customers"
-                    element={
-                        <PrivateRoute
-                            component={Customers}
-                            allowedRoles={["salesman", "manager", "admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
-                <Route
-                    path="maintenance"
-                    element={
-                        <PrivateRoute
-                            component={Maintenance}
-                            allowedRoles={["manager", "admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
-                <Route
-                    path="suppliers"
-                    element={
-                        <PrivateRoute
-                            component={Suppliers}
-                            allowedRoles={["admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
-                <Route
-                    path="shifts"
-                    element={
-                        <PrivateRoute
-                            component={Shifts}
-                            allowedRoles={["salesman", "manager", "admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
 
                 {/* Reports Section */}
                 <Route
-                    path="reports/sales"
+                    path="daily-report"
                     element={
                         <PrivateRoute
-                            component={SalesReport}
-                            allowedRoles={["manager", "admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
-                <Route
-                    path="reports/sales"
-                    element={
-                        <PrivateRoute
-                            component={SalesReport}
-                            allowedRoles={["manager", "admin"]}
-                            redirectPath="/dashboard/access-denied"
-                        />
-                    }
-                />
-                <Route
-                    path="reports/inventory"
-                    element={
-                        <PrivateRoute
-                            component={InventoryReport}
+                            component={DailyReport}
                             allowedRoles={["manager", "admin"]}
                             redirectPath="/dashboard/access-denied"
                         />
@@ -162,7 +47,7 @@ export default function Dashboard() {
                     element={
                         <PrivateRoute
                             component={Registration}
-                            allowedRoles={["admin"]}
+                            allowedRoles={["admin", "manager"]}
                             redirectPath="/dashboard/access-denied"
                         />
                     }

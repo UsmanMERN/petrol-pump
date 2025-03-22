@@ -1,0 +1,7 @@
+import React from 'react'
+
+export default function DailyReport() {
+    return (
+        <div>DailyReport</div>
+    )
+}
