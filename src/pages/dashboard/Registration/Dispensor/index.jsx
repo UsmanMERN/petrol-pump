@@ -251,8 +251,6 @@ const DispenserManagement = () => {
                 open={isModalVisible}
                 onCancel={handleCancel}
                 footer={null}
-                centered
-                maskClosable={false}
                 width={600}
             >
                 <Spin spinning={submitting} tip="Processing...">
