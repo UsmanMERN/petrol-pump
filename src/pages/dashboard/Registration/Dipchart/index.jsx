@@ -33,7 +33,7 @@ const DipChartManagement = () => {
     const [tanks, setTanks] = useState([]);
     const [products, setProducts] = useState([]);
 
-    // Modal visibility states
+    // Modal visibility state
     const [isModalVisible, setIsModalVisible] = useState(false);
 
     // For filtering the table by tank
@@ -197,18 +197,52 @@ const DipChartManagement = () => {
             onFilter: (value, record) => record.tankId === value,
         },
         {
-            title: 'Opening Stock (liters)',
-            key: 'openingStock',
+            title: 'Tank Opening Stock (liters)',
+            key: 'tankOpeningStock',
             render: (_, record) => {
                 const tank = tanks.find(t => t.id === record.tankId);
-                return tank ? tank.openingStock : '-';
+                return tank ? Number(tank.openingStock).toFixed(2) : '-';
             },
             sorter: (a, b) => {
                 const tankA = tanks.find(t => t.id === a.tankId);
                 const tankB = tanks.find(t => t.id === b.tankId);
-                const openingA = tankA ? Number(tankA.openingStock) : 0;
-                const openingB = tankB ? Number(tankB.openingStock) : 0;
-                return openingA - openingB;
+                const osA = tankA ? Number(tankA.openingStock) : 0;
+                const osB = tankB ? Number(tankB.openingStock) : 0;
+                return osA - osB;
+            },
+        },
+        {
+            title: 'Tank Remaining Stock (liters)',
+            key: 'tankRemainingStock',
+            render: (_, record) => {
+                const tank = tanks.find(t => t.id === record.tankId);
+                return tank ? Number(tank.remainingStock).toFixed(2) : '-';
+            },
+            sorter: (a, b) => {
+                const tankA = tanks.find(t => t.id === a.tankId);
+                const tankB = tanks.find(t => t.id === b.tankId);
+                const rsA = tankA ? Number(tankA.remainingStock) : 0;
+                const rsB = tankB ? Number(tankB.remainingStock) : 0;
+                return rsA - rsB;
+            },
+        },
+        {
+            title: 'Stock Difference (liters)',
+            key: 'stockDiff',
+            render: (_, record) => {
+                const tank = tanks.find(t => t.id === record.tankId);
+                if (!tank) return '-';
+                // Difference remains as openingStock - remainingStock (static vs updated)
+                const diff = Number(tank.openingStock) - Number(tank.remainingStock);
+                const color = diff > 0 ? 'red' : diff < 0 ? 'green' : 'inherit';
+                return <span style={{ color }}>{diff.toFixed(2)}</span>;
+            },
+            sorter: (a, b) => {
+                const tankA = tanks.find(t => t.id === a.tankId);
+                const tankB = tanks.find(t => t.id === b.tankId);
+                const diffA = tankA ? Number(tankA.openingStock) - Number(tankA.remainingStock) : 0;
+                const diffB = tankB ? Number(tankB.openingStock) - Number(tankB.remainingStock) : 0;
+                return diffA - diffB;
             },
         },
         {
@@ -228,21 +262,18 @@ const DipChartManagement = () => {
             key: 'gainLoss',
             render: (_, record) => {
                 const tank = tanks.find(t => t.id === record.tankId);
-                const openingStock = tank ? Number(tank.openingStock) : 0;
-                const diff = record.dipLiters - openingStock;
+                if (!tank) return '-';
+                // Compare the dip chart volume to the tank's current remainingStock.
+                const diff = record.dipLiters - Number(tank.remainingStock);
                 const color = diff > 0 ? 'green' : diff < 0 ? 'red' : 'inherit';
-                return (
-                    <span style={{ color }}>
-                        {diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2)}
-                    </span>
-                );
+                return <span style={{ color }}>{diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2)}</span>;
             },
             sorter: (a, b) => {
                 const tankA = tanks.find(t => t.id === a.tankId);
                 const tankB = tanks.find(t => t.id === b.tankId);
-                const openingA = tankA ? Number(tankA.openingStock) : 0;
-                const openingB = tankB ? Number(tankB.openingStock) : 0;
-                return (a.dipLiters - openingA) - (b.dipLiters - openingB);
+                const diffA = tankA ? a.dipLiters - Number(tankA.remainingStock) : 0;
+                const diffB = tankB ? b.dipLiters - Number(tankB.remainingStock) : 0;
+                return diffA - diffB;
             },
         },
         {

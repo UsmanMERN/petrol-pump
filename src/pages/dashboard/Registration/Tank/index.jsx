@@ -101,11 +101,15 @@ const TankManagement = () => {
             }
 
             if (editingId) {
-                await updateDoc(doc(db, "tanks", editingId), values);
+                // When editing, we do not allow updating openingStock.
+                const { openingStock, ...otherValues } = values;
+                await updateDoc(doc(db, "tanks", editingId), otherValues);
                 message.success("Tank updated successfully");
             } else {
+                // For new records, initialize remainingStock to be equal to openingStock.
                 await addDoc(collection(db, "tanks"), {
                     ...values,
+                    remainingStock: values.openingStock,
                     createdAt: new Date()
                 });
                 message.success("Tank created successfully");
@@ -144,7 +148,8 @@ const TankManagement = () => {
                 ...tank,
                 capacity: parseFloat(tank.capacity.toFixed(2)),
                 openingStock: parseFloat(tank.openingStock.toFixed(2)),
-                alertThreshold: parseFloat(tank.alertThreshold.toFixed(2))
+                alertThreshold: parseFloat(tank.alertThreshold.toFixed(2)),
+                remainingStock: tank.remainingStock !== undefined ? parseFloat(tank.remainingStock.toFixed(2)) : parseFloat(tank.openingStock.toFixed(2))
             }));
             exportToExcel(formattedTanks, 'Tanks');
             message.success("Tanks exported successfully");
@@ -191,17 +196,40 @@ const TankManagement = () => {
             sorter: (a, b) => a.openingStock - b.openingStock,
         },
         {
-            title: 'Opening Volume',
-            dataIndex: 'openingStock',
-            key: 'openingVolume',
-            render: (stock, record) => (
-                <Progress
-                    percent={record.capacity ? parseFloat((stock / record.capacity) * 100).toFixed(2) : 0}
-                    size="small"
-                    status={record.capacity && (stock / record.capacity) < 0.2 ? 'exception' : 'normal'}
-                />
-            ),
-            sorter: (a, b) => (a.openingStock / a.capacity) - (b.openingStock / b.capacity),
+            title: 'Remaining Stock (Liters)',
+            dataIndex: 'remainingStock',
+            key: 'remainingStock',
+            render: (stock, record) => {
+                // If remainingStock is not defined, fallback to openingStock.
+                const value = stock !== undefined ? stock : record.openingStock;
+                return parseFloat(value).toFixed(2);
+            },
+            sorter: (a, b) => {
+                const remA = a.remainingStock !== undefined ? a.remainingStock : a.openingStock;
+                const remB = b.remainingStock !== undefined ? b.remainingStock : b.openingStock;
+                return remA - remB;
+            }
+        },
+        {
+            title: 'Remaining Volume',
+            key: 'remainingVolume',
+            render: (text, record) => {
+                // Use remainingStock if defined, otherwise fallback to openingStock.
+                const remaining = record.remainingStock !== undefined ? record.remainingStock : record.openingStock;
+                const percent = record.capacity ? (remaining / record.capacity) * 100 : 0;
+                return (
+                    <Progress
+                        percent={parseFloat(percent.toFixed(2))}
+                        size="small"
+                        status={record.capacity && (remaining / record.capacity) < 0.2 ? 'exception' : 'normal'}
+                    />
+                );
+            },
+            sorter: (a, b) => {
+                const remA = a.remainingStock !== undefined ? a.remainingStock : a.openingStock;
+                const remB = b.remainingStock !== undefined ? b.remainingStock : b.openingStock;
+                return (remA / a.capacity) - (remB / b.capacity);
+            }
         },
         {
             title: 'Low Level Alert Threshold (Liters)',
@@ -221,7 +249,7 @@ const TankManagement = () => {
                             icon={<EditOutlined />}
                             onClick={() => showModal(record)}
                             size="small"
-                            disabled={!isAdmin} // Restrict to admins
+                            disabled={!isAdmin}
                         />
                     </Tooltip>
                     <Tooltip title="Delete">
@@ -231,7 +259,7 @@ const TankManagement = () => {
                             okText="Yes"
                             cancelText="No"
                             okButtonProps={{ loading: deleteLoading === record.id }}
-                            disabled={!isAdmin} // Restrict to admins
+                            disabled={!isAdmin}
                         >
                             <Button
                                 danger
@@ -256,7 +284,7 @@ const TankManagement = () => {
                         type="primary"
                         icon={<PlusOutlined />}
                         onClick={() => showModal()}
-                        disabled={!isAdmin} // Restrict to admins
+                        disabled={!isAdmin}
                     >
                         Add Tank
                     </Button>
@@ -359,6 +387,7 @@ const TankManagement = () => {
                                 style={{ width: '100%' }}
                                 placeholder="Enter opening stock in liters"
                                 precision={2}
+                                disabled={!!editingId}
                             />
                         </Form.Item>
 

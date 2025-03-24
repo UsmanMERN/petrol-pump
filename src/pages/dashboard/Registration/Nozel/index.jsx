@@ -193,14 +193,14 @@ const NozzleManagement = () => {
             const { currentReading, previousReading, tankId, newPrice } = values;
             const salesVolume = currentReading - previousReading;
 
-            // Validation checks
+            // Validation: Ensure current reading is greater than or equal to previous reading.
             if (salesVolume < 0) {
                 message.error("Current reading cannot be less than previous reading");
                 setRecordReadingLoading(false);
                 return;
             }
 
-            // Find the product to compute sales amount
+            // Find the linked product to compute sales amount.
             const product = products.find(p => p.id === selectedNozzle.productId);
             if (!product) {
                 message.error("Linked product not found");
@@ -208,30 +208,31 @@ const NozzleManagement = () => {
                 return;
             }
 
-            // Check tank volume
+            // Check tank volume using remainingStock (openingStock remains constant).
             const selectedTank = tanks.find(t => t.id === tankId);
             if (!selectedTank) {
                 message.error("Selected tank not found");
                 setRecordReadingLoading(false);
                 return;
             }
-            if (typeof selectedTank.openingStock !== 'number' || selectedTank.openingStock < salesVolume) {
-                message.error(`Not enough volume in tank "${selectedTank.tankName}". Available: ${selectedTank.openingStock}, Required: ${salesVolume}`);
+            if (typeof selectedTank.remainingStock !== 'number' || selectedTank.remainingStock < salesVolume) {
+                message.error(`Not enough volume in tank "${selectedTank.tankName}". Available: ${selectedTank.remainingStock}, Required: ${salesVolume}`);
                 setRecordReadingLoading(false);
                 return;
             }
 
-            const salesAmount = salesVolume * product.salesPrice;
+            // Determine the effective price.
+            const effectivePrice = (newPrice !== undefined && newPrice !== null) ? newPrice : product.salesPrice;
+            const salesAmount = salesVolume * effectivePrice;
 
-            // Database updates
-            // 1. Update nozzle
+            // Update nozzle with new reading and accumulated sales.
             await updateDoc(doc(db, "nozzles", selectedNozzle.id), {
                 lastReading: currentReading,
                 totalSales: (selectedNozzle.totalSales || 0) + salesAmount,
                 lastUpdated: new Date(),
             });
 
-            // 2. Record reading
+            // Record the reading entry.
             await addDoc(collection(db, "readings"), {
                 nozzleId: selectedNozzle.id,
                 dispenserId: selectedNozzle.dispenserId,
@@ -241,10 +242,11 @@ const NozzleManagement = () => {
                 currentReading,
                 salesVolume,
                 salesAmount,
+                effectivePrice,
                 timestamp: new Date(),
             });
 
-            // 3. Update product price if provided
+            // Update product price for future readings if newPrice is provided.
             if (newPrice !== undefined && newPrice !== null) {
                 await updateDoc(doc(db, "products", selectedNozzle.productId), {
                     salesPrice: newPrice,
@@ -252,15 +254,15 @@ const NozzleManagement = () => {
                 });
             }
 
-            // 4. Update tank volume
+            // **Update the tank's remainingStock only** (openingStock remains unchanged).
             const tankRef = doc(db, "tanks", tankId);
-            const newVolume = selectedTank.openingStock - salesVolume;
+            const newVolume = selectedTank.remainingStock - salesVolume;
             await updateDoc(tankRef, {
-                openingStock: newVolume,
+                remainingStock: newVolume,
                 lastUpdated: new Date(),
             });
 
-            message.success(`Tank volume updated: ${selectedTank.openingStock} → ${newVolume}`);
+            message.success(`Tank remaining volume updated: ${selectedTank.remainingStock} → ${newVolume}`);
             message.success("Reading recorded successfully");
             setIsReadingModalVisible(false);
             fetchNozzles();
@@ -555,7 +557,7 @@ const NozzleManagement = () => {
                             <Select placeholder="Select tank">
                                 {tanks.map(tank => (
                                     <Option key={tank.id} value={tank.id}>
-                                        {tank.tankName} (Available: {tank.openingStock || 0})
+                                        {tank.tankName} (Available: {tank.remainingStock || 0})
                                     </Option>
                                 ))}
                             </Select>
@@ -621,6 +623,12 @@ const NozzleManagement = () => {
                             dataIndex: 'salesAmount',
                             key: 'salesAmount',
                             render: (amount) => `₨${amount.toFixed(2)}`,
+                        },
+                        {
+                            title: 'Price (PKR)',
+                            dataIndex: 'effectivePrice',
+                            key: 'effectivePrice',
+                            render: (price) => `₨${price?.toFixed(2) || '0.00'}`,
                         },
                         {
                             title: 'Tank',
