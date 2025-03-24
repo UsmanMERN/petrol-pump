@@ -50,7 +50,10 @@ const WebsiteSettings = () => {
         if (settings) {
             form.setFieldsValue({
                 websiteName: settings.name,
-                darkMode: settings.darkMode || false
+                darkMode: settings.darkMode || false,
+                location: settings.location,
+                companyPhone: settings.companyPhone,
+                companyEmail: settings.companyEmail,
             });
             setOpenImageUrl(settings.logoUrl);
             setCollapsedImageUrl(settings.collapsedLogoUrl);
@@ -179,7 +182,7 @@ const WebsiteSettings = () => {
         </Upload>
     );
 
-    // Handle form submission to update both images and other settings
+    // Handle form submission to update images and other settings
     const onFinish = async (values) => {
         if (!openImageUrl || !collapsedImageUrl) {
             message.warning({
@@ -194,7 +197,10 @@ const WebsiteSettings = () => {
                 name: values.websiteName,
                 logoUrl: openImageUrl,
                 collapsedLogoUrl: collapsedImageUrl,
-                darkMode: values.darkMode || false
+                darkMode: values.darkMode || false,
+                location: values.location,
+                companyPhone: values.companyPhone,
+                companyEmail: values.companyEmail,
             });
         } catch (error) {
             console.error('Error saving settings:', error);
@@ -237,7 +243,7 @@ const WebsiteSettings = () => {
                 >
                     <Space direction="vertical" className="w-100" size="large">
                         <div className="row">
-                            <div className="col-md-6">
+                            <div className="col-md-4">
                                 <Form.Item
                                     name="websiteName"
                                     label="Website Name"
@@ -249,6 +255,38 @@ const WebsiteSettings = () => {
                                         size="large"
                                         prefix={<Text className="me-2 text-muted">Name:</Text>}
                                     />
+                                </Form.Item>
+                            </div>
+                            <div className="col-md-4">
+                                <Form.Item
+                                    name="location"
+                                    label="Location"
+                                    rules={[{ required: true, message: 'Please enter location' }]}
+                                >
+                                    <Input placeholder="Enter location" size="large" />
+                                </Form.Item>
+                            </div>
+                            <div className="col-md-4">
+                                <Form.Item
+                                    name="companyPhone"
+                                    label="Company Phone"
+                                    rules={[{ required: true, message: 'Please enter company phone' }]}
+                                >
+                                    <Input placeholder="Enter company phone" size="large" />
+                                </Form.Item>
+                            </div>
+                        </div>
+                        <div className="row">
+                            <div className="col-md-6">
+                                <Form.Item
+                                    name="companyEmail"
+                                    label="Company Email"
+                                    rules={[
+                                        { required: true, message: 'Please enter company email' },
+                                        { type: 'email', message: 'Please enter a valid email address' }
+                                    ]}
+                                >
+                                    <Input placeholder="Enter company email" size="large" />
                                 </Form.Item>
                             </div>
                         </div>
@@ -276,7 +314,7 @@ const WebsiteSettings = () => {
                             </div>
                         </Card>
 
-                        <Form.Item className='d-flex justify-content-center align-items-center'>
+                        <Form.Item className="d-flex justify-content-center align-items-center">
                             <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saveLoading} size="large" className="w-100 py-2">
                                 Save Settings
                             </Button>

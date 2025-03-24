@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Table, Button, Modal, Form, Input, Space, Card,
-    Typography, message, Tooltip, Popconfirm, InputNumber, Spin, DatePicker, Select, Statistic, Row, Col
+    Typography, message, Tooltip, Popconfirm, InputNumber, Select, Statistic, Row, Col
 } from 'antd';
 import moment from 'moment';
 import {
@@ -28,7 +28,7 @@ const NozzleManagement = () => {
     const [isReadingModalVisible, setIsReadingModalVisible] = useState(false);
     const [isHistoryModalVisible, setIsHistoryModalVisible] = useState(false);
 
-    // Reading history and selected nozzle for reading updates
+    // Reading history and selected nozzle
     const [selectedNozzle, setSelectedNozzle] = useState(null);
     const [readingHistory, setReadingHistory] = useState([]);
 
@@ -36,7 +36,7 @@ const NozzleManagement = () => {
     const [form] = Form.useForm();
     const [readingForm] = Form.useForm();
 
-    // For edit mode and loading indicators
+    // Edit mode and loading indicators
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(false);
     const [submitLoading, setSubmitLoading] = useState(false);
@@ -44,7 +44,7 @@ const NozzleManagement = () => {
     const [recordReadingLoading, setRecordReadingLoading] = useState(false);
     const [exporting, setExporting] = useState(false);
 
-    const { user: currentUser, isAdmin } = useAuth();
+    const { isAdmin } = useAuth();
 
     useEffect(() => {
         fetchNozzles();
@@ -63,7 +63,7 @@ const NozzleManagement = () => {
             }));
             setNozzles(nozzleList);
         } catch (error) {
-            message.error("Failed to fetch nozzles: " + error.message);
+            message.error(`Failed to fetch nozzles: ${error.message}`);
         } finally {
             setLoading(false);
         }
@@ -78,7 +78,7 @@ const NozzleManagement = () => {
             }));
             setDispensers(dispenserList);
         } catch (error) {
-            message.error("Failed to fetch dispensers: " + error.message);
+            message.error(`Failed to fetch dispensers: ${error.message}`);
         }
     };
 
@@ -91,7 +91,7 @@ const NozzleManagement = () => {
             }));
             setProducts(productList);
         } catch (error) {
-            message.error("Failed to fetch products: " + error.message);
+            message.error(`Failed to fetch products: ${error.message}`);
         }
     };
 
@@ -104,7 +104,7 @@ const NozzleManagement = () => {
             }));
             setTanks(tankList);
         } catch (error) {
-            message.error("Failed to fetch tanks: " + error.message);
+            message.error(`Failed to fetch tanks: ${error.message}`);
         }
     };
 
@@ -118,14 +118,14 @@ const NozzleManagement = () => {
             setReadingHistory(readings);
             setIsHistoryModalVisible(true);
         } catch (error) {
-            message.error("Failed to fetch reading history: " + error.message);
+            message.error(`Failed to fetch reading history: ${error.message}`);
         }
     };
 
     const showModal = (record = null) => {
         if (record) {
             setEditingId(record.id);
-            form.setFieldsValue({ ...record });
+            form.setFieldsValue(record);
         } else {
             setEditingId(null);
             form.resetFields();
@@ -140,8 +140,8 @@ const NozzleManagement = () => {
             nozzleId: record.id,
             previousReading: record.lastReading || 0,
             currentReading: '',
-            tankId: undefined, // New dropdown for tank selection
-            newPrice: undefined, // Optional field to update product price
+            tankId: undefined,
+            newPrice: undefined,
         });
         setIsReadingModalVisible(true);
     };
@@ -181,7 +181,7 @@ const NozzleManagement = () => {
             setIsModalVisible(false);
             fetchNozzles();
         } catch (error) {
-            message.error("Operation failed: " + error.message);
+            message.error(`Operation failed: ${error.message}`);
         } finally {
             setSubmitLoading(false);
         }
@@ -192,11 +192,14 @@ const NozzleManagement = () => {
         try {
             const { currentReading, previousReading, tankId, newPrice } = values;
             const salesVolume = currentReading - previousReading;
+
+            // Validation checks
             if (salesVolume < 0) {
                 message.error("Current reading cannot be less than previous reading");
                 setRecordReadingLoading(false);
                 return;
             }
+
             // Find the product to compute sales amount
             const product = products.find(p => p.id === selectedNozzle.productId);
             if (!product) {
@@ -204,49 +207,66 @@ const NozzleManagement = () => {
                 setRecordReadingLoading(false);
                 return;
             }
+
+            // Check tank volume
+            const selectedTank = tanks.find(t => t.id === tankId);
+            if (!selectedTank) {
+                message.error("Selected tank not found");
+                setRecordReadingLoading(false);
+                return;
+            }
+            if (typeof selectedTank.openingStock !== 'number' || selectedTank.openingStock < salesVolume) {
+                message.error(`Not enough volume in tank "${selectedTank.tankName}". Available: ${selectedTank.openingStock}, Required: ${salesVolume}`);
+                setRecordReadingLoading(false);
+                return;
+            }
+
             const salesAmount = salesVolume * product.salesPrice;
-            // Update the nozzle record with new reading and accumulated sales
+
+            // Database updates
+            // 1. Update nozzle
             await updateDoc(doc(db, "nozzles", selectedNozzle.id), {
                 lastReading: currentReading,
                 totalSales: (selectedNozzle.totalSales || 0) + salesAmount,
                 lastUpdated: new Date(),
             });
-            // Record the reading history
+
+            // 2. Record reading
             await addDoc(collection(db, "readings"), {
                 nozzleId: selectedNozzle.id,
                 dispenserId: selectedNozzle.dispenserId,
                 productId: selectedNozzle.productId,
-                tankId, // Selected tank from dropdown
+                tankId,
                 previousReading,
                 currentReading,
                 salesVolume,
                 salesAmount,
                 timestamp: new Date(),
             });
-            // If a new price is provided, update the product's sales price
+
+            // 3. Update product price if provided
             if (newPrice !== undefined && newPrice !== null) {
                 await updateDoc(doc(db, "products", selectedNozzle.productId), {
                     salesPrice: newPrice,
+                    lastUpdated: new Date(),
                 });
             }
-            // Deduct sold volume from the tank's currentVolume
-            if (tankId) {
-                const tankRef = doc(db, "tanks", tankId);
-                const currentTank = tanks.find(t => t.id === tankId);
-                if (currentTank && typeof currentTank.currentVolume === 'number') {
-                    const newVolume = currentTank.currentVolume - salesVolume;
-                    if (newVolume < 0) {
-                        message.error("Not enough volume in the selected tank.");
-                    } else {
-                        await updateDoc(tankRef, { currentVolume: newVolume });
-                    }
-                }
-            }
+
+            // 4. Update tank volume
+            const tankRef = doc(db, "tanks", tankId);
+            const newVolume = selectedTank.openingStock - salesVolume;
+            await updateDoc(tankRef, {
+                openingStock: newVolume,
+                lastUpdated: new Date(),
+            });
+
+            message.success(`Tank volume updated: ${selectedTank.openingStock} → ${newVolume}`);
             message.success("Reading recorded successfully");
             setIsReadingModalVisible(false);
             fetchNozzles();
+            fetchTanks();
         } catch (error) {
-            message.error("Operation failed: " + error.message);
+            message.error(`Operation failed: ${error.message}`);
         } finally {
             setRecordReadingLoading(false);
         }
@@ -259,7 +279,7 @@ const NozzleManagement = () => {
             message.success("Nozzle deleted successfully");
             fetchNozzles();
         } catch (error) {
-            message.error("Delete failed: " + error.message);
+            message.error(`Delete failed: ${error.message}`);
         } finally {
             setDeleteLoading(false);
         }
@@ -269,9 +289,9 @@ const NozzleManagement = () => {
         setExporting(true);
         try {
             exportToExcel(nozzles, 'Nozzles');
-            message.success("Exported successfully");
+            message.success("Nozzles exported successfully");
         } catch (error) {
-            message.error("Export failed: " + error.message);
+            message.error(`Export failed: ${error.message}`);
         } finally {
             setExporting(false);
         }
@@ -311,7 +331,7 @@ const NozzleManagement = () => {
             dataIndex: 'totalSales',
             key: 'totalSales',
             render: (sales) => `₨${sales?.toFixed(2) || '0.00'}`,
-            sorter: (a, b) => a.totalSales - b.totalSales,
+            sorter: (a, b) => (a.totalSales || 0) - (b.totalSales || 0),
         },
         {
             title: 'Last Updated',
@@ -353,6 +373,7 @@ const NozzleManagement = () => {
                             icon={<EditOutlined />}
                             onClick={() => showModal(record)}
                             size="small"
+                            disabled={!isAdmin}
                         />
                     </Tooltip>
                     <Tooltip title="Delete">
@@ -362,12 +383,13 @@ const NozzleManagement = () => {
                             okText="Yes"
                             cancelText="No"
                             okButtonProps={{ loading: deleteLoading === record.id }}
+                            disabled={!isAdmin}
                         >
                             <Button
                                 danger
                                 icon={deleteLoading === record.id ? <LoadingOutlined /> : <DeleteOutlined />}
                                 size="small"
-                                disabled={deleteLoading === record.id}
+                                disabled={deleteLoading === record.id || !isAdmin}
                             />
                         </Popconfirm>
                     </Tooltip>
@@ -385,6 +407,7 @@ const NozzleManagement = () => {
                         type="primary"
                         icon={<PlusOutlined />}
                         onClick={() => showModal()}
+                        disabled={!isAdmin}
                     >
                         Add Nozzle Attachment
                     </Button>
@@ -436,13 +459,12 @@ const NozzleManagement = () => {
                     onFinish={handleSubmit}
                 >
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                        {/* Removed Attachment ID and Nozzle Position fields */}
                         <Form.Item
                             name="dispenserId"
                             label="Dispenser"
                             rules={[{ required: true, message: 'Please select dispenser' }]}
                         >
-                            <Select placeholder="Select dispenser">
+                            <Select placeholder="Select dispenser" disabled={!isAdmin}>
                                 {dispensers.map(dispenser => (
                                     <Option key={dispenser.id} value={dispenser.id}>
                                         {dispenser.dispenserName}
@@ -455,7 +477,7 @@ const NozzleManagement = () => {
                             label="Product"
                             rules={[{ required: true, message: 'Please select product' }]}
                         >
-                            <Select placeholder="Select product">
+                            <Select placeholder="Select product" disabled={!isAdmin}>
                                 {products.map(product => (
                                     <Option key={product.id} value={product.id}>
                                         {product.productName}
@@ -466,7 +488,10 @@ const NozzleManagement = () => {
                         <Form.Item
                             name="openingReading"
                             label="Opening Reading"
-                            rules={[{ required: true, message: 'Please enter opening reading' }]}
+                            rules={[
+                                { required: true, message: 'Please enter opening reading' },
+                                { type: 'number', min: 0, message: 'Reading must be a positive number' },
+                            ]}
                         >
                             <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter opening reading" />
                         </Form.Item>
@@ -474,7 +499,7 @@ const NozzleManagement = () => {
                     <Form.Item>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                             <Button onClick={handleCancel}>Cancel</Button>
-                            <Button type="primary" htmlType="submit" loading={submitLoading} disabled={submitLoading}>
+                            <Button type="primary" htmlType="submit" loading={submitLoading} disabled={submitLoading || !isAdmin}>
                                 {editingId ? 'Update' : 'Create'}
                             </Button>
                         </div>
@@ -509,6 +534,7 @@ const NozzleManagement = () => {
                             label="Current Reading"
                             rules={[
                                 { required: true, message: 'Please enter current reading' },
+                                { type: 'number', min: 0, message: 'Reading must be a positive number' },
                                 ({ getFieldValue }) => ({
                                     validator(_, value) {
                                         if (!value || getFieldValue('previousReading') <= value) {
@@ -519,9 +545,8 @@ const NozzleManagement = () => {
                                 }),
                             ]}
                         >
-                            <InputNumber style={{ width: '100%' }} placeholder="Enter current reading" />
+                            <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter current reading" />
                         </Form.Item>
-                        {/* New field: Select Tank */}
                         <Form.Item
                             name="tankId"
                             label="Select Tank"
@@ -530,12 +555,11 @@ const NozzleManagement = () => {
                             <Select placeholder="Select tank">
                                 {tanks.map(tank => (
                                     <Option key={tank.id} value={tank.id}>
-                                        {tank.tankName}
+                                        {tank.tankName} (Available: {tank.openingStock || 0})
                                     </Option>
                                 ))}
                             </Select>
                         </Form.Item>
-                        {/* New field: Update Product Price */}
                         <Form.Item
                             name="newPrice"
                             label="New Product Price (PKR)"
@@ -597,6 +621,15 @@ const NozzleManagement = () => {
                             dataIndex: 'salesAmount',
                             key: 'salesAmount',
                             render: (amount) => `₨${amount.toFixed(2)}`,
+                        },
+                        {
+                            title: 'Tank',
+                            dataIndex: 'tankId',
+                            key: 'tankId',
+                            render: (tankId) => {
+                                const tank = tanks.find(t => t.id === tankId);
+                                return tank ? tank.tankName : 'Unknown';
+                            },
                         },
                     ]}
                     rowKey="id"

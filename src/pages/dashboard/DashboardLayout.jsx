@@ -13,6 +13,7 @@ import Sidebar from './Sidebar';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import dayjs from 'dayjs';
+import { useSettings } from '../../context/SettingsContext';
 
 // Define role priority (highest to lowest)
 const ROLE_PRIORITY = ['admin', 'manager', 'salesman', 'user'];
@@ -21,6 +22,7 @@ const { Header, Content, Footer } = Layout;
 const { Title, Text } = Typography;
 
 const DashboardLayout = ({ children }) => {
+  const { settings } = useSettings();
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -243,7 +245,7 @@ const DashboardLayout = ({ children }) => {
         </Content>
 
         <Footer className="text-center py-3 bg-transparent border-0">
-          <Text type="secondary" className="fs-7">Petrol Pump Management System ©{new Date().getFullYear()}</Text>
+          <Text type="secondary" className="fs-7">{settings.name} ©{new Date().getFullYear()}</Text>
         </Footer>
       </Layout>
     </Layout>
