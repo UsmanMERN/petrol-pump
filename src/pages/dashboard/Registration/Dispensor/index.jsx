@@ -26,6 +26,7 @@ const DispenserManagement = () => {
     const [exporting, setExporting] = useState(false);
     const [deleting, setDeleting] = useState(null);
 
+    console.log('nozzles :>> ', nozzles);
     useEffect(() => {
         fetchDispensers();
         fetchNozzles();

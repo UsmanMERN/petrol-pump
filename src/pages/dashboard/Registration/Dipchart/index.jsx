@@ -12,6 +12,7 @@ import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase
 import { exportToExcel } from '../../../../services/exportService';
 import { useAuth } from '../../../../context/AuthContext';
 import { db } from '../../../../config/firebase';
+import { mmArray, ltrArray } from '../../../../data/dipdata';
 
 const { Title } = Typography;
 const { Option } = Select;
@@ -27,27 +28,36 @@ const formatDateTimeLocal = (date) => {
     return `${year}-${month}-${day}T${hours}:${minutes}`;
 };
 
+function getLiters(mm) {
+    if (mm < mmArray[0]) {
+        return 0;
+    }
+    if (mm > mmArray[mmArray.length - 1]) {
+        return ltrArray[ltrArray.length - 1];
+    }
+    for (let i = 0; i < mmArray.length - 1; i++) {
+        if (mm >= mmArray[i] && mm <= mmArray[i + 1]) {
+            const slope = (ltrArray[i + 1] - ltrArray[i]) / (mmArray[i + 1] - mmArray[i]);
+            const liters = ltrArray[i] + slope * (mm - mmArray[i]);
+            return Number(liters.toFixed(1));
+        }
+    }
+    return null;
+}
+
 const DipChartManagement = () => {
-    // Data states
+    const { user: currentUser, isAdmin } = useAuth();
+    const [form] = Form.useForm();
+
     const [dipCharts, setDipCharts] = useState([]);
     const [tanks, setTanks] = useState([]);
     const [products, setProducts] = useState([]);
 
-    // Modal visibility state
     const [isModalVisible, setIsModalVisible] = useState(false);
-
-    // For filtering the table by tank
     const [selectedTankForCalc, setSelectedTankForCalc] = useState(null);
-
-    // Form instance
-    const [form] = Form.useForm();
-
-    // Other states
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(false);
     const [buttonLoading, setButtonLoading] = useState(false);
-
-    const { user: currentUser, isAdmin } = useAuth();
 
     useEffect(() => {
         fetchDipCharts();
@@ -103,8 +113,8 @@ const DipChartManagement = () => {
             setEditingId(record.id);
             form.setFieldsValue({
                 tankId: record.tankId,
-                dipInches: record.dipInches,
-                dipLiters: record.dipLiters,
+                dipMm: record.dipMm || record.dipInches,
+                dipLiters: getLiters(record.dipMm || record.dipInches),
                 recordedAt: record.recordedAt ? formatDateTimeLocal(record.recordedAt) : formatDateTimeLocal(new Date())
             });
         } else {
@@ -197,23 +207,20 @@ const DipChartManagement = () => {
             onFilter: (value, record) => record.tankId === value,
         },
         {
-            title: 'Tank Opening Stock (liters)',
-            key: 'tankOpeningStock',
-            render: (_, record) => {
-                const tank = tanks.find(t => t.id === record.tankId);
-                return tank ? Number(tank.openingStock).toFixed(2) : '-';
-            },
-            sorter: (a, b) => {
-                const tankA = tanks.find(t => t.id === a.tankId);
-                const tankB = tanks.find(t => t.id === b.tankId);
-                const osA = tankA ? Number(tankA.openingStock) : 0;
-                const osB = tankB ? Number(tankB.openingStock) : 0;
-                return osA - osB;
-            },
+            title: 'Dip (mm)',
+            dataIndex: 'dipMm',
+            key: 'dipMm',
+            sorter: (a, b) => (a.dipMm || 0) - (b.dipMm || 0),
         },
         {
-            title: 'Tank Remaining Stock (liters)',
-            key: 'tankRemainingStock',
+            title: 'Volume (liters)',
+            dataIndex: 'dipLiters',
+            key: 'dipLiters',
+            sorter: (a, b) => a.dipLiters - b.dipLiters,
+        },
+        {
+            title: 'Book Stock (L)',
+            key: 'bookStock',
             render: (_, record) => {
                 const tank = tanks.find(t => t.id === record.tankId);
                 return tank ? Number(tank.remainingStock).toFixed(2) : '-';
@@ -227,73 +234,50 @@ const DipChartManagement = () => {
             },
         },
         {
-            title: 'Stock Difference (liters)',
-            key: 'stockDiff',
+            title: 'Discrepancy (L)',
+            key: 'discrepancy',
             render: (_, record) => {
                 const tank = tanks.find(t => t.id === record.tankId);
                 if (!tank) return '-';
-                // Difference remains as openingStock - remainingStock (static vs updated)
-                const diff = Number(tank.openingStock) - Number(tank.remainingStock);
-                const color = diff > 0 ? 'red' : diff < 0 ? 'green' : 'inherit';
-                return <span style={{ color }}>{diff.toFixed(2)}</span>;
+                const discrepancy = Number(tank.remainingStock) - record.dipLiters;
+                const color = discrepancy > 0 ? 'red' : discrepancy < 0 ? 'green' : 'inherit';
+                return <span style={{ color }}>{discrepancy.toFixed(2)}</span>;
             },
             sorter: (a, b) => {
                 const tankA = tanks.find(t => t.id === a.tankId);
                 const tankB = tanks.find(t => t.id === b.tankId);
-                const diffA = tankA ? Number(tankA.openingStock) - Number(tankA.remainingStock) : 0;
-                const diffB = tankB ? Number(tankB.openingStock) - Number(tankB.remainingStock) : 0;
-                return diffA - diffB;
+                const discrepancyA = tankA ? Number(tankA.remainingStock) - a.dipLiters : 0;
+                const discrepancyB = tankB ? Number(tankB.remainingStock) - b.dipLiters : 0;
+                return discrepancyA - discrepancyB;
             },
         },
         {
-            title: 'Dip (inches)',
-            dataIndex: 'dipInches',
-            key: 'dipInches',
-            sorter: (a, b) => (a.dipInches || 0) - (b.dipInches || 0),
-        },
-        {
-            title: 'Volume (liters)',
-            dataIndex: 'dipLiters',
-            key: 'dipLiters',
-            sorter: (a, b) => a.dipLiters - b.dipLiters,
-        },
-        {
-            title: 'Gain/Loss (liters)',
+            title: 'Gain/Loss (L)',
             key: 'gainLoss',
             render: (_, record) => {
                 const tank = tanks.find(t => t.id === record.tankId);
                 if (!tank) return '-';
-                // Compare the dip chart volume to the tank's current remainingStock.
-                const diff = record.dipLiters - Number(tank.remainingStock);
-                const color = diff > 0 ? 'green' : diff < 0 ? 'red' : 'inherit';
-                return <span style={{ color }}>{diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2)}</span>;
+                // Calculate the net difference: positive for gain, negative for loss
+                const gainLoss = record.dipLiters - Number(tank.remainingStock);
+                // Color green for gains, red for losses
+                const color = gainLoss >= 0 ? 'green' : 'red';
+                return <span style={{ color }}>{gainLoss.toFixed(2)}</span>;
             },
             sorter: (a, b) => {
                 const tankA = tanks.find(t => t.id === a.tankId);
                 const tankB = tanks.find(t => t.id === b.tankId);
-                const diffA = tankA ? a.dipLiters - Number(tankA.remainingStock) : 0;
-                const diffB = tankB ? b.dipLiters - Number(tankB.remainingStock) : 0;
-                return diffA - diffB;
+                const gainLossA = a.dipLiters - (tankA ? Number(tankA.remainingStock) : 0);
+                const gainLossB = b.dipLiters - (tankB ? Number(tankB.remainingStock) : 0);
+                return gainLossA - gainLossB;
             },
         },
-        {
-            title: 'Updated Date',
-            dataIndex: 'updatedAt',
-            key: 'updatedAt',
-            render: (date) => date ? new Date(date).toLocaleDateString() : '-',
-            sorter: (a, b) => new Date(a.updatedAt) - new Date(b.updatedAt),
-            responsive: ['lg'],
-        },
+
         {
             title: 'Recorded Date/Time',
             dataIndex: 'recordedAt',
             key: 'recordedAt',
-            render: (date) =>
-                date
-                    ? new Date(date).toLocaleDateString() + ' ' + new Date(date).toLocaleTimeString()
-                    : '-',
+            render: (date) => date ? new Date(date).toLocaleString() : '-',
             sorter: (a, b) => new Date(a.recordedAt) - new Date(b.recordedAt),
-            responsive: ['lg'],
         },
         {
             title: 'Actions',
@@ -397,6 +381,12 @@ const DipChartManagement = () => {
                 <Form
                     form={form}
                     layout="vertical"
+                    onValuesChange={(changedValues, allValues) => {
+                        if (changedValues.dipMm !== undefined) {
+                            const liters = getLiters(changedValues.dipMm);
+                            form.setFieldsValue({ dipLiters: liters });
+                        }
+                    }}
                     onFinish={handleSubmit}
                 >
                     <Form.Item
@@ -411,17 +401,18 @@ const DipChartManagement = () => {
                         </Select>
                     </Form.Item>
                     <Form.Item
-                        name="dipInches"
-                        label="Dip (inches)"
+                        name="dipMm"
+                        label="Dip (mm)"
+                        rules={[{ required: true, message: 'Please enter dip in mm' }]}
                     >
-                        <InputNumber min={0} step={0.1} style={{ width: '100%' }} placeholder="Enter dip in inches" />
+                        <InputNumber min={0} step={0.1} style={{ width: '100%' }} placeholder="Enter dip in mm" />
                     </Form.Item>
                     <Form.Item
                         name="dipLiters"
                         label="Volume (liters)"
-                        rules={[{ required: true, message: 'Please enter volume' }]}
+                        rules={[{ required: true, message: 'Volume is required' }]}
                     >
-                        <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter volume in liters" />
+                        <InputNumber min={0} style={{ width: '100%' }} placeholder="Computed volume in liters" disabled />
                     </Form.Item>
                     <Form.Item
                         name="recordedAt"

@@ -12,11 +12,14 @@ import {
     Divider,
     message,
     Spin,
-    Image
+    Modal,
+    Form,
+    InputNumber,
+    Input
 } from 'antd';
 import moment from 'moment';
 import { FileExcelOutlined, FilePdfOutlined } from '@ant-design/icons';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { exportToExcel } from '../../../services/exportService';
 import ReactDatePicker from 'react-datepicker';
@@ -24,6 +27,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import autoTable from 'jspdf-autotable';
+import { mmArray, ltrArray } from '../../../data/dipdata';
 import { useSettings } from '../../../context/SettingsContext';
 
 const { Title: TitleTypography } = Typography;
@@ -43,8 +47,25 @@ const CustomDateRangePicker = ({ startDate, endDate, onChange }) => {
     );
 };
 
+const getLiters = (mm) => {
+    if (mm < mmArray[0]) {
+        return 0;
+    }
+    if (mm > mmArray[mmArray.length - 1]) {
+        return ltrArray[ltrArray.length - 1];
+    }
+    for (let i = 0; i < mmArray.length - 1; i++) {
+        if (mm >= mmArray[i] && mm <= mmArray[i + 1]) {
+            const slope = (ltrArray[i + 1] - ltrArray[i]) / (mmArray[i + 1] - mmArray[i]);
+            const liters = ltrArray[i] + slope * (mm - mmArray[i]);
+            return Number(liters.toFixed(1));
+        }
+    }
+    return null;
+};
+
 const SalesReportPage = () => {
-    const { settings } = useSettings()
+    const { settings } = useSettings();
     const [loading, setLoading] = useState(false);
     const [exportLoading, setExportLoading] = useState(false);
     const [dateRange, setDateRange] = useState([moment().startOf('day').toDate(), moment().endOf('day').toDate()]);
@@ -63,6 +84,12 @@ const SalesReportPage = () => {
     const [nozzles, setNozzles] = useState([]);
     const [dipChartData, setDipChartData] = useState([]);
 
+    // New state for modals/forms (record reading and record dip chart)
+    const [isReadingModalVisible, setIsReadingModalVisible] = useState(false);
+    const [isDipChartModalVisible, setIsDipChartModalVisible] = useState(false);
+    const [readingForm] = Form.useForm();
+    const [dipChartForm] = Form.useForm();
+
     const reportRef = useRef(null);
 
     useEffect(() => {
@@ -76,7 +103,6 @@ const SalesReportPage = () => {
     const fetchCollectionData = async () => {
         setLoading(true);
         try {
-            // Fetch required collections concurrently (including dipcharts)
             const [
                 productsData,
                 tanksData,
@@ -103,7 +129,6 @@ const SalesReportPage = () => {
         }
     };
 
-    // Generate report data based on the date range and report type
     const generateReport = () => {
         if (!dateRange[0] || !dateRange[1] || products.length === 0) return;
         setLoading(true);
@@ -115,11 +140,12 @@ const SalesReportPage = () => {
                 return readingDate >= startDate && readingDate <= endDate;
             });
 
-            // Calculate sales for each product (showing all products even with zero sales)
             const salesByProduct = products.map(product => {
                 const productReadings = filteredReadings.filter(r => r.productId === product.id);
                 const totalVolume = productReadings.reduce((sum, r) => sum + (r.salesVolume || 0), 0);
                 const totalAmount = productReadings.reduce((sum, r) => sum + (r.salesAmount || 0), 0);
+                const totalPreviousReading = productReadings.reduce((sum, r) => sum + (r.previousReading || 0), 0);
+                const totalCurrentReading = productReadings.reduce((sum, r) => sum + (r.currentReading || 0), 0);
                 return {
                     productId: product.id,
                     productName: product.productName,
@@ -127,11 +153,12 @@ const SalesReportPage = () => {
                     salesPrice: product.salesPrice,
                     totalVolume,
                     totalAmount,
+                    totalPreviousReading,
+                    totalCurrentReading,
                     readings: productReadings
                 };
             });
 
-            // Group product sales by category
             const salesByCategory = calculateSalesByCategory(salesByProduct);
             const grandTotal = salesByProduct.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
             const comparisonData = calculateComparisonData(filteredReadings, grandTotal);
@@ -149,7 +176,6 @@ const SalesReportPage = () => {
         }
     };
 
-    // Group products by category and compute subtotals
     const calculateSalesByCategory = (salesByProduct) => {
         const categoryMap = {};
         salesByProduct.forEach(product => {
@@ -170,7 +196,6 @@ const SalesReportPage = () => {
         return Object.values(categoryMap);
     };
 
-    // Calculate comparison data for the "daily" report type
     const calculateComparisonData = (currentReadings, currentTotal) => {
         if (reportType !== 'daily') return null;
         const yesterdayStart = moment().subtract(1, 'day').startOf('day');
@@ -222,7 +247,6 @@ const SalesReportPage = () => {
         }
     };
 
-    // Export report to Excel (existing functionality)
     const handleExportToExcel = () => {
         setExportLoading(true);
         try {
@@ -244,48 +268,39 @@ const SalesReportPage = () => {
             setExportLoading(false);
         }
     };
-    // Enhanced PDF export with professional formatting
+
     const handleExportToPDF = () => {
         setExportLoading(true);
         try {
-            // Create PDF document with A4 dimensions
             const pdf = new jsPDF('p', 'mm', 'a4');
             const pageWidth = pdf.internal.pageSize.getWidth();
             const margin = 15;
             const usableWidth = pageWidth - (margin * 2);
-
-            // Company Name and Info (Replace with your company details)
             const companyName = `${settings.name}`;
             const companyInfo = [
                 `Address: ${settings.location}`,
                 `Email: ${settings.companyEmail}`,
                 `Phone: ${settings.companyPhone}`,
-
             ];
 
-            // Add company logo
             try {
                 pdf.addImage(`${settings.logoUrl}`, 'PNG', margin, margin, 40, 20);
             } catch (logoError) {
                 console.warn("Logo could not be added:", logoError);
-                // If logo fails, just use text
                 pdf.setFontSize(16);
                 pdf.setFont('helvetica', 'bold');
                 pdf.text(companyName, margin, margin + 10);
             }
 
-            // Add company info
             pdf.setFontSize(8);
             pdf.setFont('helvetica', 'normal');
             companyInfo.forEach((line, i) => {
                 pdf.text(line, pageWidth - margin, margin + 5 + (i * 4), { align: 'right' });
             });
 
-            // Add horizontal line
             pdf.setDrawColor(200, 200, 200);
             pdf.line(margin, margin + 25, pageWidth - margin, margin + 25);
 
-            // Add report title and metadata
             pdf.setFontSize(18);
             pdf.setFont('helvetica', 'bold');
             pdf.text(`${reportType.charAt(0).toUpperCase() + reportType.slice(1)} Sales Report`, margin, margin + 35);
@@ -297,7 +312,6 @@ const SalesReportPage = () => {
 
             let yPosition = margin + 55;
 
-            // Add Sales Summary section
             pdf.setFillColor(240, 240, 240);
             pdf.rect(margin, yPosition, usableWidth, 8, 'F');
             pdf.setFontSize(12);
@@ -305,7 +319,6 @@ const SalesReportPage = () => {
             pdf.text('Sales Summary', margin + 5, yPosition + 6);
             yPosition += 15;
 
-            // Add Grand Total with a highlighted box
             pdf.setFillColor(245, 245, 245);
             pdf.rect(margin, yPosition, usableWidth / 2, 15, 'F');
             pdf.setDrawColor(200, 200, 200);
@@ -313,12 +326,11 @@ const SalesReportPage = () => {
 
             pdf.setFont('helvetica', 'bold');
             pdf.text('Grand Total Sales:', margin + 5, yPosition + 10);
-            pdf.setTextColor(0, 100, 0); // Dark green for total
+            pdf.setTextColor(0, 100, 0);
             pdf.text(`${reportData.grandTotal.toFixed(2)}`, margin + 60, yPosition + 10);
-            pdf.setTextColor(0, 0, 0); // Reset text color
+            pdf.setTextColor(0, 0, 0);
             yPosition += 25;
 
-            // Compare with previous period if available
             if (reportData.comparisonData) {
                 pdf.setFont('helvetica', 'normal');
                 pdf.setFontSize(9);
@@ -327,19 +339,15 @@ const SalesReportPage = () => {
                 const changeColor = change >= 0 ? [0, 100, 0] : [180, 0, 0];
                 pdf.setTextColor(...changeColor);
                 pdf.text(changeText, margin, yPosition);
-                pdf.setTextColor(0, 0, 0); // Reset text color
+                pdf.setTextColor(0, 0, 0);
                 yPosition += 10;
             }
 
-            // Add Category Tables
             reportData.salesByCategory.forEach(category => {
-                // Check if we need to add a new page
                 if (yPosition > pdf.internal.pageSize.getHeight() - 60) {
                     pdf.addPage();
                     yPosition = margin;
                 }
-
-                // Category Header
                 pdf.setFillColor(240, 240, 240);
                 pdf.rect(margin, yPosition, usableWidth, 8, 'F');
                 pdf.setFontSize(12);
@@ -347,26 +355,26 @@ const SalesReportPage = () => {
                 pdf.text(`${category.categoryName} Products`, margin + 5, yPosition + 6);
                 yPosition += 15;
 
-                // Create table data
                 const tableData = category.products.map(product => [
                     product.productName,
                     `${product.salesPrice?.toFixed(2) || '0.00'}`,
+                    (product.totalPreviousReading || 0).toFixed(2),
+                    (product.totalCurrentReading || 0).toFixed(2),
                     (product.totalVolume || 0).toFixed(2),
                     `${product.totalAmount?.toFixed(2) || '0.00'}`
                 ]);
-
-                // Add category subtotal row
                 tableData.push([
                     'Subtotal',
+                    '',
+                    '',
                     '',
                     (category.subtotalVolume || 0).toFixed(2),
                     `${(category.subtotalAmount || 0).toFixed(2)}`
                 ]);
 
-                // Add product table with autoTable
                 autoTable(pdf, {
                     startY: yPosition,
-                    head: [['Product', 'Price (PKR)', 'Volume (L)', 'Total (PKR)']],
+                    head: [['Product', 'Price (PKR)', 'Previous Reading', 'Current Reading', 'Volume (L)', 'Total (PKR)']],
                     body: tableData,
                     headStyles: {
                         fillColor: [50, 50, 120],
@@ -384,19 +392,14 @@ const SalesReportPage = () => {
                     theme: 'grid',
                     styles: { fontSize: 9 }
                 });
-
                 yPosition = pdf.lastAutoTable.finalY + 15;
             });
 
-            // Add Dip Chart Data
             if (dipChartData.length > 0) {
-                // Check if we need to add a new page
                 if (yPosition > pdf.internal.pageSize.getHeight() - 60) {
                     pdf.addPage();
                     yPosition = margin;
                 }
-
-                // Dip Chart Header
                 pdf.setFillColor(240, 240, 240);
                 pdf.rect(margin, yPosition, usableWidth, 8, 'F');
                 pdf.setFontSize(12);
@@ -407,22 +410,33 @@ const SalesReportPage = () => {
                 const dipChartTableData = dipChartData.map(record => {
                     const tank = tanks.find(t => t.id === record.tankId);
                     const tankName = tank ? tank.tankName : 'Unknown';
-                    const openingStock = tank ? Number(tank.openingStock) : 0;
-                    const diff = record.dipLiters - openingStock;
-
+                    const remainingStock = tank ? Number(tank.remainingStock) : 0;
+                    const discrepancy = remainingStock - record.dipLiters;
+                    const loss = discrepancy > 0 ? discrepancy : 0;
+                    let recordedAtStr = '-';
+                    if (record.recordedAt) {
+                        if (record.recordedAt instanceof Date) {
+                            recordedAtStr = record.recordedAt.toLocaleString();
+                        } else if (typeof record.recordedAt.toDate === 'function') {
+                            recordedAtStr = record.recordedAt.toDate().toLocaleString();
+                        } else if (typeof record.recordedAt === 'string') {
+                            recordedAtStr = new Date(record.recordedAt).toLocaleString();
+                        }
+                    }
                     return [
                         tankName,
-                        record.dipInches,
+                        record.dipMm,
                         record.dipLiters,
-                        openingStock,
-                        diff.toFixed(2),
-                        record.recordedAt ? new Date(record.recordedAt).toLocaleString() : '-'
+                        remainingStock.toFixed(2),
+                        discrepancy.toFixed(2),
+                        loss.toFixed(2),
+                        recordedAtStr
                     ];
                 });
 
                 autoTable(pdf, {
                     startY: yPosition,
-                    head: [['Tank', 'Dip (inches)', 'Volume (L)', 'Opening Stock', 'Gain/Loss', 'Recorded Date/Time']],
+                    head: [['Tank', 'Dip (mm)', 'Volume (L)', 'Book Stock (L)', 'Discrepancy (L)', 'Loss (L)', 'Recorded Date/Time']],
                     body: dipChartTableData,
                     headStyles: {
                         fillColor: [50, 50, 120],
@@ -436,44 +450,44 @@ const SalesReportPage = () => {
                     styles: { fontSize: 9 },
                     columnStyles: {
                         4: {
-                            cellCreator: (cell, data) => {
+                            cellCreator: (cell) => {
                                 const value = parseFloat(cell.text);
-                                if (value > 0) {
-                                    cell.styles.textColor = [0, 128, 0]; // Green for positive gain
-                                } else if (value < 0) {
-                                    cell.styles.textColor = [200, 0, 0]; // Red for loss
-                                }
+                                if (value > 0) cell.styles.textColor = [200, 0, 0];
+                                else if (value < 0) cell.styles.textColor = [0, 128, 0];
+                                return cell;
+                            }
+                        },
+                        5: {
+                            cellCreator: (cell) => {
+                                const value = parseFloat(cell.text);
+                                if (value > 0) cell.styles.textColor = [200, 0, 0];
                                 return cell;
                             }
                         }
                     }
                 });
+
+                const totalLoss = calculateTotalLoss();
+                yPosition = pdf.lastAutoTable.finalY + 10;
+                pdf.setFontSize(12);
+                pdf.setFont('helvetica', 'bold');
+                pdf.text('Total Loss (Liters):', margin, yPosition);
+                pdf.setTextColor(200, 0, 0);
+                pdf.text(totalLoss.toFixed(2), margin + 50, yPosition);
+                pdf.setTextColor(0, 0, 0);
             }
 
-            // Add footer with page numbers
             const totalPages = pdf.internal.getNumberOfPages();
             for (let i = 1; i <= totalPages; i++) {
                 pdf.setPage(i);
-
-                // Add horizontal line
                 pdf.setDrawColor(200, 200, 200);
                 pdf.line(margin, pdf.internal.pageSize.getHeight() - 15, pageWidth - margin, pdf.internal.pageSize.getHeight() - 15);
-
-                // Add page numbers
                 pdf.setFontSize(8);
                 pdf.setFont('helvetica', 'normal');
-                pdf.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pdf.internal.pageSize.getHeight() - 10, {
-                    align: 'center'
-                });
-
-                // Add company footer
+                pdf.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pdf.internal.pageSize.getHeight() - 10, { align: 'center' });
                 pdf.text(`© ${new Date().getFullYear()} ${companyName} - Confidential`, margin, pdf.internal.pageSize.getHeight() - 10);
-
-                // Add report ID
                 const reportId = `REP-${moment().format('YYYYMMDD')}-${Math.floor(Math.random() * 1000)}`;
-                pdf.text(`Report ID: ${reportId}`, pageWidth - margin, pdf.internal.pageSize.getHeight() - 10, {
-                    align: 'right'
-                });
+                pdf.text(`Report ID: ${reportId}`, pageWidth - margin, pdf.internal.pageSize.getHeight() - 10, { align: 'right' });
             }
 
             pdf.save(`Sales_Report_${reportType}_${moment().format('YYYYMMDD')}.pdf`);
@@ -486,7 +500,105 @@ const SalesReportPage = () => {
         }
     };
 
-    // Table columns for product sales
+    const showReadingModal = () => {
+        readingForm.resetFields();
+        setIsReadingModalVisible(true);
+    };
+
+    const handleNozzleChange = (nozzleId) => {
+        const selectedNozzle = nozzles.find(n => n.id === nozzleId);
+        if (selectedNozzle) {
+            readingForm.setFieldsValue({ previousReading: selectedNozzle.lastReading || 0 });
+        }
+    };
+
+    const handleReadingSubmit = async (values) => {
+        try {
+            const { nozzleId, previousReading, currentReading, tankId, newPrice } = values;
+            if (currentReading < previousReading) {
+                message.error("Current reading must be greater than or equal to previous reading");
+                return;
+            }
+            const salesVolume = currentReading - previousReading;
+            const selectedNozzle = nozzles.find(n => n.id === nozzleId);
+            if (!selectedNozzle) {
+                message.error("Nozzle not found");
+                return;
+            }
+            const product = products.find(p => p.id === selectedNozzle.productId);
+            if (!product) {
+                message.error("Linked product not found");
+                return;
+            }
+            const selectedTank = tanks.find(t => t.id === tankId);
+            if (!selectedTank) {
+                message.error("Selected tank not found");
+                return;
+            }
+            if (selectedTank.remainingStock < salesVolume) {
+                message.error(`Not enough volume in tank "${selectedTank.tankName}". Available: ${selectedTank.remainingStock}, Required: ${salesVolume}`);
+                return;
+            }
+            const effectivePrice = (newPrice !== undefined && newPrice !== null) ? newPrice : product.salesPrice;
+            const salesAmount = salesVolume * effectivePrice;
+            await updateDoc(doc(db, "nozzles", nozzleId), {
+                lastReading: currentReading,
+                totalSales: (selectedNozzle.totalSales || 0) + salesAmount,
+                lastUpdated: new Date()
+            });
+            await addDoc(collection(db, "readings"), {
+                nozzleId,
+                dispenserId: selectedNozzle.dispenserId,
+                productId: selectedNozzle.productId,
+                tankId,
+                previousReading,
+                currentReading,
+                salesVolume,
+                salesAmount,
+                effectivePrice,
+                timestamp: new Date()
+            });
+            if (newPrice !== undefined && newPrice !== null) {
+                await updateDoc(doc(db, "products", selectedNozzle.productId), {
+                    salesPrice: newPrice,
+                    lastUpdated: new Date()
+                });
+            }
+            await updateDoc(doc(db, "tanks", tankId), {
+                remainingStock: selectedTank.remainingStock - salesVolume,
+                lastUpdated: new Date()
+            });
+            message.success("Reading recorded successfully");
+            setIsReadingModalVisible(false);
+            fetchCollectionData();
+        } catch (error) {
+            message.error("Failed to record reading: " + error.message);
+        }
+    };
+
+    const showDipChartModal = () => {
+        dipChartForm.resetFields();
+        setIsDipChartModalVisible(true);
+    };
+
+    const handleDipChartSubmit = async (values) => {
+        try {
+            const { tankId, dipMm, recordedAt } = values;
+            const dipLiters = getLiters(dipMm);
+            await addDoc(collection(db, "dipcharts"), {
+                tankId,
+                dipMm,
+                dipLiters,
+                recordedAt: new Date(recordedAt)
+            });
+            message.success("Dip chart recorded successfully");
+            setIsDipChartModalVisible(false);
+            fetchCollectionData();
+        } catch (error) {
+            message.error("Failed to record dip chart: " + error.message);
+        }
+    };
+
     const productColumns = [
         {
             title: 'Product',
@@ -498,6 +610,18 @@ const SalesReportPage = () => {
             dataIndex: 'salesPrice',
             key: 'salesPrice',
             render: (price) => `₨${price?.toFixed(2) || '0.00'}`
+        },
+        {
+            title: 'Previous Reading',
+            dataIndex: 'totalPreviousReading',
+            key: 'totalPreviousReading',
+            render: (reading) => (reading || 0).toFixed(2)
+        },
+        {
+            title: 'Current Reading',
+            dataIndex: 'totalCurrentReading',
+            key: 'totalCurrentReading',
+            render: (reading) => (reading || 0).toFixed(2)
         },
         {
             title: 'Volume Sold (Liters)',
@@ -513,7 +637,6 @@ const SalesReportPage = () => {
         }
     ];
 
-    // Table columns for dip chart data including Opening Stock and Gain/Loss
     const dipChartColumns = [
         {
             title: 'Tank',
@@ -525,9 +648,9 @@ const SalesReportPage = () => {
             }
         },
         {
-            title: 'Dip (inches)',
-            dataIndex: 'dipInches',
-            key: 'dipInches'
+            title: 'Dip (mm)',
+            dataIndex: 'dipMm',
+            key: 'dipMm'
         },
         {
             title: 'Volume (liters)',
@@ -535,31 +658,71 @@ const SalesReportPage = () => {
             key: 'dipLiters'
         },
         {
-            title: 'Opening Stock',
-            key: 'openingStock',
+            title: 'Book Stock (L)',
+            key: 'bookStock',
             render: (_, record) => {
                 const tank = tanks.find(t => t.id === record.tankId);
-                return tank ? tank.openingStock : '-';
+                return tank ? Number(tank.remainingStock).toFixed(2) : '-';
             }
         },
         {
-            title: 'Gain/Loss',
+            title: 'Discrepancy (L)',
+            key: 'discrepancy',
+            render: (_, record) => {
+                const tank = tanks.find(t => t.id === record.tankId);
+                if (!tank) return '-';
+                const remainingStock = Number(tank.remainingStock);
+                const discrepancy = remainingStock - record.dipLiters;
+                const color = discrepancy > 0 ? 'red' : discrepancy < 0 ? 'green' : 'black';
+                return <span style={{ color }}>{discrepancy.toFixed(2)}</span>;
+            }
+        },
+        {
+            title: 'Gain/Loss (L)',
             key: 'gainLoss',
             render: (_, record) => {
                 const tank = tanks.find(t => t.id === record.tankId);
-                const openingStock = tank ? Number(tank.openingStock) : 0;
-                const diff = record.dipLiters - openingStock;
-                const color = diff > 0 ? 'green' : diff < 0 ? 'red' : 'black';
-                return <span style={{ color }}>{diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2)}</span>;
+                if (!tank) return '-';
+                const gainLoss = record.dipLiters - Number(tank.remainingStock);
+                const color = gainLoss >= 0 ? 'green' : 'red';
+                return <span style={{ color }}>{gainLoss.toFixed(2)}</span>;
+            },
+            sorter: (a, b) => {
+                const tankA = tanks.find(t => t.id === a.tankId);
+                const tankB = tanks.find(t => t.id === b.tankId);
+                const gainLossA = a.dipLiters - (tankA ? Number(tankA.remainingStock) : 0);
+                const gainLossB = b.dipLiters - (tankB ? Number(tankB.remainingStock) : 0);
+                return gainLossA - gainLossB;
             }
         },
         {
             title: 'Recorded Date/Time',
             dataIndex: 'recordedAt',
             key: 'recordedAt',
-            render: (date) => date ? new Date(date).toLocaleString() : '-'
+            render: (date) => {
+                if (date instanceof Date) {
+                    return date.toLocaleString();
+                } else if (date && typeof date.toDate === 'function') {
+                    return date.toDate().toLocaleString();
+                } else if (typeof date === 'string') {
+                    return new Date(date).toLocaleString();
+                } else {
+                    return '-';
+                }
+            }
         }
     ];
+
+    const calculateTotalLoss = () => {
+        return dipChartData.reduce((total, record) => {
+            const tank = tanks.find(t => t.id === record.tankId);
+            if (!tank) return total;
+            const remainingStock = Number(tank.remainingStock);
+            const discrepancy = remainingStock - record.dipLiters;
+            const loss = discrepancy > 0 ? discrepancy : 0;
+            return total + loss;
+        }, 0);
+    };
 
     return (
         <Card className="sales-report-container">
@@ -570,6 +733,12 @@ const SalesReportPage = () => {
                     </Col>
                     <Col xs={24} md={16}>
                         <Space wrap style={{ width: '100%', justifyContent: 'flex-end' }}>
+                            <Button type="primary" onClick={showReadingModal}>
+                                Record Reading
+                            </Button>
+                            <Button type="primary" onClick={showDipChartModal}>
+                                Record Dip Chart
+                            </Button>
                             <Select
                                 value={reportType}
                                 onChange={handleReportTypeChange}
@@ -606,10 +775,8 @@ const SalesReportPage = () => {
                 </Row>
             </div>
 
-            {/* Report Content Container for screen display */}
             <div id="report-content" ref={reportRef}>
                 <Spin spinning={loading}>
-                    {/* Product Sales Grouped by Category */}
                     <Divider orientation="center">Product Sales by Category</Divider>
                     {reportData.salesByCategory.map(category => (
                         <div key={category.category} style={{ marginBottom: 30 }}>
@@ -623,8 +790,10 @@ const SalesReportPage = () => {
                                     <Table.Summary.Row>
                                         <Table.Summary.Cell index={0}><strong>Subtotal</strong></Table.Summary.Cell>
                                         <Table.Summary.Cell index={1}></Table.Summary.Cell>
-                                        <Table.Summary.Cell index={2}><strong>{(category.subtotalVolume || 0).toFixed(2)}</strong></Table.Summary.Cell>
-                                        <Table.Summary.Cell index={3}><strong>₨{(category.subtotalAmount || 0).toFixed(2)}</strong></Table.Summary.Cell>
+                                        <Table.Summary.Cell index={2}></Table.Summary.Cell>
+                                        <Table.Summary.Cell index={3}></Table.Summary.Cell>
+                                        <Table.Summary.Cell index={4}><strong>{(category.subtotalVolume || 0).toFixed(2)}</strong></Table.Summary.Cell>
+                                        <Table.Summary.Cell index={5}><strong>₨{(category.subtotalAmount || 0).toFixed(2)}</strong></Table.Summary.Cell>
                                     </Table.Summary.Row>
                                 )}
                             />
@@ -641,7 +810,6 @@ const SalesReportPage = () => {
                         </Col>
                     </Row>
 
-                    {/* Dip Chart Data Section */}
                     <Divider orientation="center">Dip Chart Data</Divider>
                     <Table
                         columns={dipChartColumns}
@@ -650,8 +818,147 @@ const SalesReportPage = () => {
                         pagination={false}
                         bordered
                     />
+                    <Divider orientation="center">Total Loss</Divider>
+                    <Row style={{ marginBottom: 30 }}>
+                        <Col span={12}>
+                            <Statistic
+                                title="Total Loss (Liters)"
+                                value={calculateTotalLoss()}
+                                precision={2}
+                            />
+                        </Col>
+                    </Row>
                 </Spin>
             </div>
+
+            <Modal
+                title="Record Reading"
+                visible={isReadingModalVisible}
+                onCancel={() => setIsReadingModalVisible(false)}
+                footer={null}
+            >
+                <Form
+                    form={readingForm}
+                    layout="vertical"
+                    onFinish={handleReadingSubmit}
+                >
+                    <Form.Item
+                        name="nozzleId"
+                        label="Select Nozzle"
+                        rules={[{ required: true, message: 'Please select a nozzle' }]}
+                    >
+                        <Select placeholder="Select nozzle" onChange={handleNozzleChange}>
+                            {nozzles.map(nozzle => (
+                                <Option key={nozzle.id} value={nozzle.id}>
+                                    {nozzle.nozzleName}
+                                </Option>
+                            ))}
+                        </Select>
+                    </Form.Item>
+                    <Form.Item
+                        name="previousReading"
+                        label="Previous Reading"
+                    >
+                        <InputNumber disabled style={{ width: '100%' }} placeholder="Auto-filled" />
+                    </Form.Item>
+                    <Form.Item
+                        name="currentReading"
+                        label="Current Reading"
+                        rules={[{ required: true, message: 'Please enter current reading' }]}
+                    >
+                        <InputNumber min={0} style={{ width: '100%' }} placeholder="Enter current reading" />
+                    </Form.Item>
+                    <Form.Item
+                        name="tankId"
+                        label="Select Tank"
+                        rules={[{ required: true, message: 'Please select a tank' }]}
+                    >
+                        <Select placeholder="Select tank">
+                            {tanks.map(tank => (
+                                <Option key={tank.id} value={tank.id}>
+                                    {tank.tankName} (Available: {tank.remainingStock || 0})
+                                </Option>
+                            ))}
+                        </Select>
+                    </Form.Item>
+                    <Form.Item
+                        name="newPrice"
+                        label="New Product Price (PKR) - optional"
+                    >
+                        <InputNumber
+                            min={0}
+                            style={{ width: '100%' }}
+                            placeholder="Enter new product price if updating"
+                        />
+                    </Form.Item>
+                    <Form.Item>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                            <Button onClick={() => setIsReadingModalVisible(false)}>Cancel</Button>
+                            <Button type="primary" htmlType="submit">Record Reading</Button>
+                        </div>
+                    </Form.Item>
+                </Form>
+            </Modal>
+
+            <Modal
+                title="Record Dip Chart Entry"
+                visible={isDipChartModalVisible}
+                onCancel={() => setIsDipChartModalVisible(false)}
+                footer={null}
+            >
+                <Form
+                    form={dipChartForm}
+                    layout="vertical"
+                    onFinish={handleDipChartSubmit}
+                    onValuesChange={(changedValues) => {
+                        if (changedValues.dipMm !== undefined) {
+                            const computedLiters = getLiters(changedValues.dipMm);
+                            dipChartForm.setFieldsValue({ dipLiters: computedLiters });
+                        }
+                    }}
+                >
+                    <Form.Item
+                        name="tankId"
+                        label="Select Tank"
+                        rules={[{ required: true, message: 'Please select a tank' }]}
+                    >
+                        <Select placeholder="Select tank">
+                            {tanks.map(tank => (
+                                <Option key={tank.id} value={tank.id}>
+                                    {tank.tankName}
+                                </Option>
+                            ))}
+                        </Select>
+                    </Form.Item>
+                    <Form.Item
+                        name="dipMm"
+                        label="Dip (mm)"
+                        rules={[{ required: true, message: 'Please enter dip in mm' }]}
+                    >
+                        <InputNumber min={0} step={0.1} style={{ width: '100%' }} placeholder="Enter dip in mm" />
+                    </Form.Item>
+                    <Form.Item
+                        name="dipLiters"
+                        label="Volume (liters)"
+                        rules={[{ required: true, message: 'Volume is required' }]}
+                    >
+                        <InputNumber disabled style={{ width: '100%' }} placeholder="Auto-computed volume" />
+                    </Form.Item>
+                    <Form.Item
+                        name="recordedAt"
+                        label="Recorded Date/Time"
+                        rules={[{ required: true, message: 'Please select date/time' }]}
+                    >
+                        <Input type="datetime-local" />
+                    </Form.Item>
+                    <Form.Item>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                            <Button onClick={() => setIsDipChartModalVisible(false)}>Cancel</Button>
+                            <Button type="primary" htmlType="submit">Record Dip Chart</Button>
+                        </div>
+                    </Form.Item>
+                </Form>
+            </Modal>
         </Card>
     );
 };

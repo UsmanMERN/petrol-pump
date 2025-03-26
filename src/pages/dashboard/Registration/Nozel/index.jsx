@@ -31,6 +31,7 @@ const NozzleManagement = () => {
     // Reading history and selected nozzle
     const [selectedNozzle, setSelectedNozzle] = useState(null);
     const [readingHistory, setReadingHistory] = useState([]);
+    const [readingDeleteLoading, setReadingDeleteLoading] = useState(null);
 
     // Form instances
     const [form] = Form.useForm();
@@ -122,6 +123,21 @@ const NozzleManagement = () => {
         }
     };
 
+    const handleDeleteReading = async (readingId) => {
+        setReadingDeleteLoading(readingId);
+        try {
+            await deleteDoc(doc(db, "readings", readingId));
+            message.success("Reading deleted successfully");
+            if (selectedNozzle) {
+                fetchReadingHistory(selectedNozzle.id);
+            }
+        } catch (error) {
+            message.error(`Failed to delete reading: ${error.message}`);
+        } finally {
+            setReadingDeleteLoading(null);
+        }
+    };
+
     const showModal = (record = null) => {
         if (record) {
             setEditingId(record.id);
@@ -129,7 +145,7 @@ const NozzleManagement = () => {
         } else {
             setEditingId(null);
             form.resetFields();
-            form.setFieldsValue({ openingReading: 0 });
+            form.setFieldsValue({ openingReading: 0, nozzleName: '' });
         }
         setIsModalVisible(true);
     };
@@ -323,6 +339,12 @@ const NozzleManagement = () => {
             onFilter: (value, record) => record.productId === value,
         },
         {
+            title: 'Nozzle Name',
+            dataIndex: 'nozzleName',
+            key: 'nozzleName',
+            sorter: (a, b) => a.nozzleName.localeCompare(b.nozzleName),
+        },
+        {
             title: 'Last Reading',
             dataIndex: 'lastReading',
             key: 'lastReading',
@@ -396,6 +418,67 @@ const NozzleManagement = () => {
                         </Popconfirm>
                     </Tooltip>
                 </Space>
+            ),
+        },
+    ];
+
+    // Columns for the Reading History table with delete action added
+    const readingHistoryColumns = [
+        {
+            title: 'Date',
+            dataIndex: 'timestamp',
+            key: 'timestamp',
+            render: (timestamp) => moment(timestamp.toDate()).format('DD/MM/YYYY HH:mm:ss'),
+        },
+        {
+            title: 'Previous Reading',
+            dataIndex: 'previousReading',
+            key: 'previousReading',
+        },
+        {
+            title: 'Current Reading',
+            dataIndex: 'currentReading',
+            key: 'currentReading',
+        },
+        {
+            title: 'Sales Volume',
+            dataIndex: 'salesVolume',
+            key: 'salesVolume',
+        },
+        {
+            title: 'Sales Amount (PKR)',
+            dataIndex: 'salesAmount',
+            key: 'salesAmount',
+            render: (amount) => `₨${amount.toFixed(2)}`,
+        },
+        {
+            title: 'Price (PKR)',
+            dataIndex: 'effectivePrice',
+            key: 'effectivePrice',
+            render: (price) => `₨${price?.toFixed(2) || '0.00'}`,
+        },
+        {
+            title: 'Tank',
+            dataIndex: 'tankId',
+            key: 'tankId',
+            render: (tankId) => {
+                const tank = tanks.find(t => t.id === tankId);
+                return tank ? tank.tankName : 'Unknown';
+            },
+        },
+        {
+            title: 'Actions',
+            key: 'actions',
+            render: (_, record) => (
+                <Popconfirm
+                    title="Are you sure you want to delete this reading?"
+                    onConfirm={() => handleDeleteReading(record.id)}
+                    okText="Yes"
+                    cancelText="No"
+                    okButtonProps={{ loading: readingDeleteLoading === record.id }}
+                >
+                    <Button danger icon={readingDeleteLoading === record.id ? <LoadingOutlined /> : <DeleteOutlined />} size="small" />
+                </Popconfirm>
             ),
         },
     ];
@@ -486,6 +569,14 @@ const NozzleManagement = () => {
                                     </Option>
                                 ))}
                             </Select>
+                        </Form.Item>
+                        <Form.Item
+                            name="nozzleName"
+                            label="Nozzle Name"
+                            rules={[{ required: true, message: 'Please enter nozzle name' }]}
+                            style={{ gridColumn: 'span 2' }}
+                        >
+                            <Input placeholder="Enter nozzle name" />
                         </Form.Item>
                         <Form.Item
                             name="openingReading"
@@ -596,50 +687,7 @@ const NozzleManagement = () => {
             >
                 <Table
                     dataSource={readingHistory}
-                    columns={[
-                        {
-                            title: 'Date',
-                            dataIndex: 'timestamp',
-                            key: 'timestamp',
-                            render: (timestamp) => moment(timestamp.toDate()).format('DD/MM/YYYY HH:mm:ss'),
-                        },
-                        {
-                            title: 'Previous Reading',
-                            dataIndex: 'previousReading',
-                            key: 'previousReading',
-                        },
-                        {
-                            title: 'Current Reading',
-                            dataIndex: 'currentReading',
-                            key: 'currentReading',
-                        },
-                        {
-                            title: 'Sales Volume',
-                            dataIndex: 'salesVolume',
-                            key: 'salesVolume',
-                        },
-                        {
-                            title: 'Sales Amount (PKR)',
-                            dataIndex: 'salesAmount',
-                            key: 'salesAmount',
-                            render: (amount) => `₨${amount.toFixed(2)}`,
-                        },
-                        {
-                            title: 'Price (PKR)',
-                            dataIndex: 'effectivePrice',
-                            key: 'effectivePrice',
-                            render: (price) => `₨${price?.toFixed(2) || '0.00'}`,
-                        },
-                        {
-                            title: 'Tank',
-                            dataIndex: 'tankId',
-                            key: 'tankId',
-                            render: (tankId) => {
-                                const tank = tanks.find(t => t.id === tankId);
-                                return tank ? tank.tankName : 'Unknown';
-                            },
-                        },
-                    ]}
+                    columns={readingHistoryColumns}
                     rowKey="id"
                     pagination={{ pageSize: 10 }}
                 />
