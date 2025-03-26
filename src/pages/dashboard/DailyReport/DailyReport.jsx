@@ -25,7 +25,6 @@ import { exportToExcel } from '../../../services/exportService';
 import ReactDatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import autoTable from 'jspdf-autotable';
 import { mmArray, ltrArray } from '../../../data/dipdata';
 import { useSettings } from '../../../context/SettingsContext';
@@ -412,7 +411,7 @@ const SalesReportPage = () => {
                     const tankName = tank ? tank.tankName : 'Unknown';
                     const remainingStock = tank ? Number(tank.remainingStock) : 0;
                     const discrepancy = remainingStock - record.dipLiters;
-                    const loss = discrepancy > 0 ? discrepancy : 0;
+                    const gainLoss = record.dipLiters - remainingStock;
                     let recordedAtStr = '-';
                     if (record.recordedAt) {
                         if (record.recordedAt instanceof Date) {
@@ -429,14 +428,14 @@ const SalesReportPage = () => {
                         record.dipLiters,
                         remainingStock.toFixed(2),
                         discrepancy.toFixed(2),
-                        loss.toFixed(2),
+                        gainLoss.toFixed(2),
                         recordedAtStr
                     ];
                 });
 
                 autoTable(pdf, {
                     startY: yPosition,
-                    head: [['Tank', 'Dip (mm)', 'Volume (L)', 'Book Stock (L)', 'Discrepancy (L)', 'Loss (L)', 'Recorded Date/Time']],
+                    head: [['Tank', 'Dip (mm)', 'Volume (L)', 'Book Stock (L)', 'Discrepancy (L)', 'Gain/Loss (L)', 'Recorded Date/Time']],
                     body: dipChartTableData,
                     headStyles: {
                         fillColor: [50, 50, 120],
@@ -460,20 +459,32 @@ const SalesReportPage = () => {
                         5: {
                             cellCreator: (cell) => {
                                 const value = parseFloat(cell.text);
-                                if (value > 0) cell.styles.textColor = [200, 0, 0];
+                                if (value > 0) cell.styles.textColor = [0, 128, 0];
+                                else if (value < 0) cell.styles.textColor = [200, 0, 0];
                                 return cell;
                             }
                         }
                     }
                 });
 
-                const totalLoss = calculateTotalLoss();
+                // New function to calculate total gain/loss
+                const calculateTotalGainLoss = () => {
+                    return dipChartData.reduce((total, record) => {
+                        const tank = tanks.find(t => t.id === record.tankId);
+                        if (!tank) return total;
+                        const gainLoss = record.dipLiters - Number(tank.remainingStock);
+                        return total + gainLoss;
+                    }, 0);
+                };
+
+                const totalGainLoss = calculateTotalGainLoss();
                 yPosition = pdf.lastAutoTable.finalY + 10;
                 pdf.setFontSize(12);
                 pdf.setFont('helvetica', 'bold');
-                pdf.text('Total Loss (Liters):', margin, yPosition);
-                pdf.setTextColor(200, 0, 0);
-                pdf.text(totalLoss.toFixed(2), margin + 50, yPosition);
+                pdf.text('Total Gain/Loss (Liters):', margin, yPosition);
+                // Optionally, you can set a color depending on the sign of totalGainLoss
+                pdf.setTextColor(totalGainLoss >= 0 ? 0 : 200, totalGainLoss >= 0 ? 100 : 0, totalGainLoss >= 0 ? 0 : 0);
+                pdf.text(totalGainLoss.toFixed(2), margin + 60, yPosition);
                 pdf.setTextColor(0, 0, 0);
             }
 
@@ -713,6 +724,7 @@ const SalesReportPage = () => {
         }
     ];
 
+    // This function is still used for on-screen display if needed
     const calculateTotalLoss = () => {
         return dipChartData.reduce((total, record) => {
             const tank = tanks.find(t => t.id === record.tankId);

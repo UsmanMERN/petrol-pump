@@ -19,7 +19,6 @@
     "chartjs-plugin-datalabels": "^2.2.0",
     "crypto-js": "^4.2.0",
     "firebase": "^11.3.1",
-    "html2canvas": "^1.4.1",
     "js-cookie": "^3.0.5",
     "jspdf": "^3.0.1",
     "jspdf-autotable": "^5.0.2",
